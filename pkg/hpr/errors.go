@@ -4,8 +4,8 @@ import "errors"
 
 // Sentinel errors returned by the hpr package and conforming drivers.
 var (
-	// ErrNoDevices is returned by Manager.Scan / Manager.Open when no
-	// registered driver matches any device on the system.
+	// ErrNoDevices is returned by Manager.Scan when no registered
+	// driver claims any device on the system.
 	ErrNoDevices = errors.New("hpr: no supported devices found")
 
 	// ErrDeviceClosed is returned by Device methods invoked after Close.

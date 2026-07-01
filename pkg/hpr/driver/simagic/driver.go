@@ -1,3 +1,7 @@
+// Package simagic implements the Simagic haptic pedal driver for
+// tracklogic-peripherals. It plugs into hpr.Manager via hpr.Driver
+// and exposes the four supported models (P500, P700, P1000, P2000,
+// Alpha Pedal Neo).
 package simagic
 
 import (
@@ -9,16 +13,23 @@ import (
 	"github.com/tracklogic/tracklogic-peripherals/pkg/hpr"
 )
 
-// SimagicHprDriver is the Simagic implementation of hpr.Driver.
+// Universal command bounds. The Driver clamps to these silently
+// rather than rejecting out-of-range values; they live here (not
+// in pkg/hpr) because only Simagic encodes them onto the wire.
+const (
+	MinFrequency uint8 = 0
+	MaxFrequency uint8 = 50
+	MinAmplitude uint8 = 0
+	MaxAmplitude uint8 = 100
+)
+
+// Driver is the Simagic implementation of hpr.Driver.
 type Driver struct{}
 
-// NewDriver returns a Simagic SimagicHprDriver. It is safe to register
-// multiple instances (e.g. with different config) — Manager.Match
-// is per-SimagicHprDriver and order is preserved.
+// NewDriver returns a Simagic Driver. It is safe to register
+// multiple instances (e.g. with different config); Manager.Match
+// is per-Driver and order is preserved.
 func NewDriver() *Driver { return &Driver{} }
-
-// Name implements hpr.Driver.
-func (Driver) Name() string { return driverName }
 
 // Match implements hpr.Driver. It accepts any device that looks
 // like a game controller and matches a known Simagic VID/PID.
@@ -39,9 +50,9 @@ func (Driver) Describe(info hpr.DeviceInfo) hpr.DeviceInfo {
 
 // Open implements hpr.Driver. It performs an initial "all-stop"
 // sequence over the transport so the device starts in a known
-// quiet state. Caller is expected to pass a DeviceInfo that has
-// already been enriched by Describe (Manager.Scan does this).
-func (d Driver) Open(info hpr.DeviceInfo, transport hpr.Transport) (hpr.Device, error) {
+// quiet state. The caller is expected to pass a DeviceInfo that
+// has already been enriched by Describe.
+func (Driver) Open(info hpr.DeviceInfo, transport hpr.Transport) (hpr.Device, error) {
 	dev := &device{
 		info:      info,
 		transport: transport,
@@ -77,17 +88,6 @@ func (d *device) Info() hpr.DeviceInfo {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.info
-}
-
-// Capabilities implements hpr.Device.
-func (d *device) Capabilities() hpr.Capabilities {
-	return hpr.Capabilities{
-		Targets:      []hpr.Target{hpr.TargetClutch, hpr.TargetBrake, hpr.TargetThrottle},
-		MinFrequency: hpr.MinFrequency,
-		MaxFrequency: hpr.MaxFrequency,
-		MinAmplitude: hpr.MinAmplitude,
-		MaxAmplitude: hpr.MaxAmplitude,
-	}
 }
 
 // Vibrate implements hpr.Device. Repeated identical commands are
@@ -149,8 +149,8 @@ func (d *device) Close() error {
 }
 
 // Pulse is a convenience helper. It is exposed as a package-level
-// function (Pulse) so callers don't need a type assertion.
-func (d *device) Pulse(target hpr.Target, frequency, amplitude float32, duration time.Duration) error {
+// function so callers don't need a type assertion.
+func (d *device) Pulse(target hpr.Target, frequency, amplitude uint8, duration time.Duration) error {
 	if err := d.Vibrate(hpr.Command{Target: target, State: hpr.On, Frequency: frequency, Amplitude: amplitude}); err != nil {
 		return err
 	}
@@ -206,8 +206,8 @@ func normalize(cmd hpr.Command) (normalizedCommand, error) {
 	if !cmd.Target.Valid() {
 		return normalizedCommand{}, fmt.Errorf("simagic: invalid target: %d", cmd.Target)
 	}
-	freq := uint8(clampToRange(cmd.Frequency, hpr.MinFrequency, hpr.MaxFrequency))
-	amp := uint8(clampToRange(cmd.Amplitude, hpr.MinAmplitude, hpr.MaxAmplitude))
+	freq := clampToRange(cmd.Frequency, MinFrequency, MaxFrequency)
+	amp := clampToRange(cmd.Amplitude, MinAmplitude, MaxAmplitude)
 	state := cmd.State
 	if state != hpr.On {
 		state = hpr.Off
@@ -223,7 +223,7 @@ func normalize(cmd hpr.Command) (normalizedCommand, error) {
 	}, nil
 }
 
-func clampToRange(v, min, max float32) float32 {
+func clampToRange(v, min, max uint8) uint8 {
 	if v < min {
 		return min
 	}

@@ -1,10 +1,12 @@
 package hpr
 
-// Manager is the registry that wires together DeviceScanner,
-// TransportOpener, and a set of Driver implementations. It is the
-// single entry point of the public API.
+// Manager is the registry that wires together a DeviceScanner,
+// a TransportOpener, and a set of Driver implementations. Callers
+// build one with NewManager and call Scan to enumerate supported
+// devices; opening a device goes through the ScannedDevice returned
+// by Scan, not through Manager.
 type Manager struct {
-	drivers []Driver
+	drivers []driver
 	scanner DeviceScanner
 	opener  TransportOpener
 }
@@ -34,7 +36,9 @@ func NewManager(options ...Option) *Manager {
 // first driver whose Match returns true for a given device claims it.
 func WithDrivers(drivers ...Driver) Option {
 	return func(m *Manager) {
-		m.drivers = append(m.drivers, drivers...)
+		for _, d := range drivers {
+			m.drivers = append(m.drivers, d)
+		}
 	}
 }
 
@@ -64,8 +68,9 @@ func WithTransportOpener(opener TransportOpener) Option {
 // driver. The returned slice is filtered: devices no driver matches
 // are dropped. Each entry is enriched by the claiming driver's
 // Describe (which sets vendor-specific fields such as Model) and
-// stamped with that driver's Name.
-func (m *Manager) Scan() ([]DeviceInfo, error) {
+// paired with an Open closure that captures the right driver and
+// transport opener — callers never have to re-resolve the driver.
+func (m *Manager) Scan() ([]ScannedDevice, error) {
 	if m.scanner == nil {
 		return nil, ErrNoDevices
 	}
@@ -74,52 +79,35 @@ func (m *Manager) Scan() ([]DeviceInfo, error) {
 		return nil, err
 	}
 
-	out := make([]DeviceInfo, 0, len(raw))
-claim:
+	out := make([]ScannedDevice, 0, len(raw))
 	for _, info := range raw {
-		for _, d := range m.drivers {
-			if !d.Match(info) {
-				continue
-			}
-			info = d.Describe(info)
-			info.DriverName = d.Name()
-			out = append(out, info)
-			continue claim
+		d, ok := m.claim(info)
+		if !ok {
+			continue
 		}
+		info = d.Describe(info)
+		driver := d
+		opener := m.opener
+		out = append(out, ScannedDevice{
+			Info: info,
+			Open: func() (Device, error) {
+				transport, err := opener(info)
+				if err != nil {
+					return nil, err
+				}
+				return driver.Open(info, transport)
+			},
+		})
 	}
 	return out, nil
 }
 
-// Open opens the device described by info. The driver is resolved
-// by DriverName — which Scan stamps on every entry — and the
-// returned Device owns its Transport; callers close it via
-// Device.Close.
-//
-// Callers typically obtain info from Scan and apply whatever
-// selection logic is appropriate for their use case (e.g. pick a
-// specific VID/PID, the first entry, a configuration value, etc.).
-// Manager does not impose a "pick the first device" convenience
-// method, because the right answer is application-specific.
-func (m *Manager) Open(info DeviceInfo) (Device, error) {
-	var driver Driver
+// claim returns the first driver that matches info.
+func (m *Manager) claim(info DeviceInfo) (driver, bool) {
 	for _, d := range m.drivers {
-		if d.Name() == info.DriverName {
-			driver = d
-			break
+		if d.Match(info) {
+			return d, true
 		}
 	}
-	if driver == nil {
-		return nil, ErrNoDevices
-	}
-
-	transport, err := m.opener(info)
-	if err != nil {
-		return nil, err
-	}
-	device, err := driver.Open(info, transport)
-	if err != nil {
-		_ = transport.Close()
-		return nil, err
-	}
-	return device, nil
+	return nil, false
 }

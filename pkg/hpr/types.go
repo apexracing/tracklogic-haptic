@@ -1,23 +1,11 @@
-// Package hpr contains the vendor-neutral types and interfaces used by
+// Package hpr contains the vendor-neutral public API used by
 // tracklogic-peripherals. See doc.go for an overview.
 package hpr
 
-import "fmt"
-
-// MinFrequency / MaxFrequency / MinAmplitude / MaxAmplitude are the
-// universal default bounds for haptic commands. Concrete drivers may
-// report tighter bounds via Capabilities; the values below are the
-// outermost envelope a Command is ever expected to exceed.
-const (
-	MinFrequency = 0
-	MaxFrequency = 50
-	MinAmplitude = 0
-	MaxAmplitude = 100
-)
-
-// Target identifies a physical axis on a haptic pedal device
-// (clutch, brake, throttle). The set is universal across drivers —
-// concrete devices may support a subset, reported via Capabilities.
+// Target identifies a physical axis on a haptic device
+// (clutch / brake / throttle). The set is universal across the
+// supported drivers — concrete devices may implement a subset,
+// surfaced through the absence of a no-op rather than via flags.
 type Target uint8
 
 const (
@@ -36,7 +24,7 @@ func (t Target) String() string {
 	case TargetThrottle:
 		return "Throttle"
 	default:
-		return fmt.Sprintf("Unknown(%d)", t)
+		return "Unknown"
 	}
 }
 
@@ -54,57 +42,27 @@ const (
 )
 
 // Command is a vendor-neutral request to drive a haptic output on a
-// given target. Drivers are responsible for translating the universal
-// frequency/amplitude ranges (see MinFrequency etc.) into the device's
-// native representation.
+// given target. Drivers translate the universal frequency/amplitude
+// bounds into the device's native representation; out-of-range values
+// are clamped silently rather than rejected.
 type Command struct {
 	Target    Target
 	State     State
-	Frequency float32
-	Amplitude float32
+	Frequency uint8 // 0..50
+	Amplitude uint8 // 0..100
 }
 
-// Capabilities describes what a concrete Device supports. Drivers
-// MUST return accurate bounds; the Manager does not second-guess.
-type Capabilities struct {
-	// Targets lists the physical axes the device exposes. It is
-	// always non-empty for an open device.
-	Targets []Target
-
-	// Frequency and amplitude bounds are inclusive. Min/Max may be
-	// tighter than the package-level defaults.
-	MinFrequency float32
-	MaxFrequency float32
-	MinAmplitude float32
-	MaxAmplitude float32
-}
-
-// SupportsTarget reports whether the device advertises support for
-// the given target.
-func (c Capabilities) SupportsTarget(t Target) bool {
-	for _, x := range c.Targets {
-		if x == t {
-			return true
-		}
-	}
-	return false
-}
-
-// DeviceInfo describes a discovered device. It is produced by
-// DeviceScanner implementations and enriched by the matching driver
-// (which sets DriverName and Model).
+// DeviceInfo describes a discovered device. It is produced by the
+// underlying platform scanner and may be enriched by the claiming
+// driver with vendor-specific data (see Model).
 type DeviceInfo struct {
-	// DriverName is the Name() of the Driver that claims this device.
-	// Empty for raw scanner output.
-	DriverName string
-
 	// Model is a driver-specific identifier. Callers that need to
 	// interpret it should type-assert to the relevant vendor type
 	// (e.g. simagic.Model). The Manager does not inspect it.
 	Model any
 
 	// DevicePath is the platform-specific path / identifier used to
-	// open the device (e.g. Windows device interface path).
+	// open the device (e.g. a Windows device interface path).
 	DevicePath string
 
 	// FriendlyName is the best human label available, typically
@@ -122,31 +80,12 @@ type DeviceInfo struct {
 	Usage     uint16
 }
 
-// Driver claims devices and opens them as Device instances. Drivers
-// are stateless factories; any per-device state lives on the Device
-// returned by Open.
-type Driver interface {
-	// Name returns a short stable identifier for the driver
-	// (e.g. "simagic"). It is used to populate DeviceInfo.DriverName
-	// and to look up drivers when reopening a known DeviceInfo.
-	Name() string
-
-	// Match reports whether the driver can handle the device.
-	// Match is consulted by Manager.Scan to filter raw scanner
-	// output.
-	Match(DeviceInfo) bool
-
-	// Describe enriches a raw DeviceInfo with driver-specific
-	// fields, typically Model. Manager.Scan calls Describe on the
-	// claiming driver so the returned DeviceInfo carries everything
-	// a caller needs (vendor type, friendly label, etc.) without
-	// having to ask the driver separately. Drivers that have
-	// nothing to add may return info unchanged.
-	Describe(DeviceInfo) DeviceInfo
-
-	// Open constructs a Device backed by the given transport. The
-	// manager owns the transport and will close it if Open fails.
-	Open(DeviceInfo, Transport) (Device, error)
+// ScannedDevice pairs a DeviceInfo with the closure needed to open
+// it. The Manager returns these from Scan so callers do not have to
+// route through the Manager a second time to open a device.
+type ScannedDevice struct {
+	Info DeviceInfo
+	Open func() (Device, error)
 }
 
 // Device is a handle to an open haptic device. Device is not
@@ -154,60 +93,22 @@ type Driver interface {
 // the contract is that callers serialise calls (typically by holding
 // a single Device value).
 type Device interface {
-	// Info returns the (driver-enriched) descriptor of the device.
+	// Info returns the descriptor of the device (as seen at Scan time).
 	Info() DeviceInfo
 
-	// Capabilities returns what the device supports.
-	Capabilities() Capabilities
-
-	// Vibrate sends a command. It MUST be safe to call repeatedly
-	// with the same arguments; drivers MAY deduplicate.
+	// Vibrate sends a command. Drivers MUST clamp Frequency/Amplitude
+	// to the supported range; out-of-range values are not an error.
 	Vibrate(Command) error
 
 	// Stop turns off the named target. Passing an invalid target is
 	// a programming error and returns an error.
 	Stop(Target) error
 
-	// StopAll turns off every target on the device. It is called
-	// by Manager.Open and by Device.Close.
+	// StopAll turns off every target on the device. It is called by
+	// Close.
 	StopAll() error
 
-	// Close releases the device and the underlying transport. It
-	// is safe to call more than once; subsequent calls return nil.
+	// Close releases the device and the underlying transport. It is
+	// safe to call more than once; subsequent calls return nil.
 	Close() error
-}
-
-// Transport is the minimal I/O surface a driver needs. On Windows
-// the canonical implementation is backed by HidD_SetFeature. Drivers
-// that need richer I/O (e.g. interrupt reads for force feedback)
-// embed this interface and add their own methods.
-type Transport interface {
-	// SetFeature sends a HID feature report.
-	SetFeature([]byte) error
-
-	// Close releases the transport. Safe to call more than once.
-	Close() error
-}
-
-// DeviceScanner enumerates raw devices visible to the OS, before any
-// driver filtering. It is the single point of platform-specific
-// device discovery in the hpr package.
-type DeviceScanner interface {
-	ScanDevices() ([]DeviceInfo, error)
-}
-
-// TransportOpener creates a Transport for a given DeviceInfo. It
-// is the platform-specific counterpart of DeviceScanner.
-type TransportOpener func(DeviceInfo) (Transport, error)
-
-// clampFloat32 is a small helper shared by drivers; it is unexported
-// so the universal helpers stay in this package.
-func clampFloat32(v, min, max float32) float32 {
-	if v < min {
-		return min
-	}
-	if v > max {
-		return max
-	}
-	return v
 }

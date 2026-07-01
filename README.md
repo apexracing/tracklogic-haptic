@@ -39,7 +39,7 @@ func main() {
         log.Fatal("未找到设备")
     }
 
-    dev, err := mgr.Open(devices[0])
+    dev, err := devices[0].Open()
     if err != nil {
         log.Fatal(err)
     }
@@ -58,6 +58,8 @@ func main() {
     dev.Stop(hpr.TargetBrake)
 }
 ```
+
+注意：`Manager` 只负责扫描和路由驱动；调用方拿到的是 `ScannedDevice`，`Open` 直接挂在它上面。
 
 ## 命令行示例
 
@@ -85,8 +87,8 @@ go build -o hpr-demo.exe ./examples/hpr-demo
 │                    │                │   wheelbase (未来) │
 └────────┬───────────┘                └─────────┬──────────┘
          │                                      │
-         │  Scan() → DeviceInfo                │  Open(info, transport)
-         ▼                                      ▼
+         │  Scan() → ScannedDevice             │  Open(info, transport)
+         ▼   (Info + Open func)                 ▼
    ┌──────────┐                          ┌────────────┐
    │ OS / HID │                          │ hpr.Device │
    │ 扫描层   │                          │  + 厂家私有 │
@@ -104,7 +106,7 @@ go build -o hpr-demo.exe ./examples/hpr-demo
 
 1. **`hpr` 包对外设完全无感**。它不能 import `pkg/hpr/driver/` 下的任何子包。新增外设类型或厂家不需要改动 `hpr`。
 2. **驱动是无状态工厂**。所有设备状态都保存在 `Driver.Open` 返回的 `Device` 上。
-3. **能力由驱动声明**。`Device.Capabilities()` 是"设备支持什么"的唯一来源；调用方不应写死任何厂家的数值。
+3. **`Scan` 一次性绑定驱动**。调用方拿到的 `ScannedDevice.Open` 已经知道该用哪个 driver；`Manager` 不再负责二次路由。
 4. **厂家私有数据在厂家包里保持强类型**。`DeviceInfo.Model` 的类型是 `any`；需要解释时请用类型断言或类型 switch 拿到厂家包里的具体类型（如 `simagic.Model`）。
 5. **没有全局状态**。不存在包级单例，每次使用都通过 `hpr.NewManager` 显式构造。
 
@@ -119,14 +121,17 @@ type Driver struct{}
 
 func NewDriver() *Driver { return &Driver{} }
 
-func (Driver) Name() string                                  { return "myvendor" }
-func (Driver) Match(info hpr.DeviceInfo) bool                { /* 按 VID/PID 判定 */ }
+func (Driver) Match(info hpr.DeviceInfo) bool { /* 按 VID/PID 判定 */ }
+func (Driver) Describe(info hpr.DeviceInfo) hpr.DeviceInfo {
+    info.Model = identify(info)  // 设置厂家私有类型
+    return info
+}
 func (Driver) Open(info hpr.DeviceInfo, t hpr.Transport) (hpr.Device, error) {
     return &device{info: info, transport: t}, nil
 }
 
 type device struct { /* ... */ }
-// 实现 hpr.Device
+// 实现 hpr.Device（Info / Vibrate / Stop / StopAll / Close）
 ```
 
 注册方式同上：

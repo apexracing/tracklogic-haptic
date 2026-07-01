@@ -130,3 +130,23 @@ func TestDriver_VibrateAfterCloseReturnsErrDeviceClosed(t *testing.T) {
 		t.Fatalf("Vibrate after Close: got %v, want ErrDeviceClosed", err)
 	}
 }
+
+func TestDriver_VibrateClampsFrequencyAndAmplitude(t *testing.T) {
+	transport := &mockTransport{}
+	dev, _ := NewDriver().Open(p1000Info(), transport)
+	if err := dev.Vibrate(hpr.Command{
+		Target:    hpr.TargetBrake,
+		State:     hpr.On,
+		Frequency: 200, // above MaxFrequency=50
+		Amplitude: 200, // above MaxAmplitude=100
+	}); err != nil {
+		t.Fatalf("Vibrate: %v", err)
+	}
+	packet := transport.features[3]
+	if packet[4] != MaxFrequency {
+		t.Fatalf("frequency on wire = %d, want %d", packet[4], MaxFrequency)
+	}
+	if packet[5] != MaxAmplitude {
+		t.Fatalf("amplitude on wire = %d, want %d", packet[5], MaxAmplitude)
+	}
+}
