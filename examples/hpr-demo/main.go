@@ -1,12 +1,16 @@
-// Command tracklogic-peripherals is a thin CLI over the
-// tracklogic-peripherals library. It scans for supported haptic
-// pedal devices, lets the user pick one (or a vendor model), and
-// emits a single vibration command before exiting.
+// Command hpr-demo is a runnable example showing how to drive a
+// Simagic haptic pedal from Go using the tracklogic-peripherals
+// library. It scans for supported devices, lets the caller pick one
+// (or via flag), and emits a single vibration command before
+// exiting.
 //
-// Example:
+// This is intentionally a small demo, not a production CLI — for
+// that, see cmd/ in a future release.
 //
-//	tracklogic-peripherals -ch 1 -f 30 -a 80 -d 2s
-//	tracklogic-peripherals -list
+// Usage:
+//
+//	go run ./examples/hpr-demo -list
+//	go run ./examples/hpr-demo -ch 1 -f 30 -a 80 -d 2s
 package main
 
 import (

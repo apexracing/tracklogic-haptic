@@ -59,13 +59,17 @@ func main() {
 }
 ```
 
-## 命令行工具
+## 命令行示例
 
-仓库自带一个简单 CLI，路径在 `cmd/tracklogic-peripherals`：
+`examples/hpr-demo` 是一个**可独立运行的示例程序**——既能 `go run` 也能 `go build` 出二进制。它演示了如何扫描、打开、发送振动命令的最简流程：
 
 ```sh
-go run ./cmd/tracklogic-peripherals -list
-go run ./cmd/tracklogic-peripherals -ch 1 -f 30 -a 80 -d 2s
+go run ./examples/hpr-demo -list
+go run ./examples/hpr-demo -ch 1 -f 30 -a 80 -d 2s
+
+# 或编译成独立二进制
+go build -o hpr-demo.exe ./examples/hpr-demo
+./hpr-demo.exe -list
 ```
 
 ## 架构
@@ -154,8 +158,8 @@ mgr := hpr.NewManager(hpr.WithDrivers(
 │           └── simagic/      # Simagic 驱动
 ├── internal/
 │   └── hidtransport/         # Windows HID 传输层（internal）
-└── cmd/
-    └── tracklogic-peripherals # 命令行工具
+└── examples/
+    └── hpr-demo/             # 可运行的示例程序
 ```
 
 ## 许可证
