@@ -27,8 +27,8 @@ import (
     "log"
     "time"
 
-    "github.com/tracklogic/tracklogic-haptic/driver/simagic"
-    "github.com/tracklogic/tracklogic-haptic/hpr"
+    "github.com/tracklogic/tracklogic-haptic/pkg/hpr/driver/simagic"
+    "github.com/tracklogic/tracklogic-haptic/pkg/hpr"
 )
 
 func main() {
@@ -73,8 +73,10 @@ go run ./cmd/tracklogic-haptic -ch 1 -f 30 -a 80 -d 2s
 ```
 ┌────────────────────┐    组装关系    ┌────────────────────┐
 │  hpr.Manager       │───────────────▶│  hpr.Driver(s)     │
-│  + DeviceScanner   │                │  driver/simagic    │
-│  + TransportOpener │                │  driver/fanatec    │  (未来)
+│  + DeviceScanner   │                │  pkg/hpr/driver/   │
+│  + TransportOpener │                │   simagic          │
+│                    │                │  pkg/hpr/driver/   │
+│                    │                │   fanatec (未来)   │
 └────────┬───────────┘                └─────────┬──────────┘
          │                                      │
          │  Scan() → DeviceInfo                │  Open(info, transport)
@@ -105,7 +107,7 @@ go run ./cmd/tracklogic-haptic -ch 1 -f 30 -a 80 -d 2s
 ```go
 package myvendor
 
-import "github.com/tracklogic/tracklogic-haptic/hpr"
+import "github.com/tracklogic/tracklogic-haptic/pkg/hpr"
 
 type Driver struct{}
 
@@ -144,9 +146,10 @@ mgr := hpr.NewManager(hpr.WithDrivers(
 
 ```
 .
-├── hpr/                  # 与厂家无关的公共 API
-├── driver/
-│   └── simagic/          # Simagic 驱动
+├── pkg/
+│   └── hpr/              # 与厂家无关的公共 API
+│       └── driver/
+│           └── simagic/  # Simagic 驱动
 ├── internal/
 │   └── hidtransport/     # Windows HID 传输层（internal）
 └── cmd/

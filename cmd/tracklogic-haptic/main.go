@@ -18,8 +18,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tracklogic/tracklogic-haptic/driver/simagic"
-	"github.com/tracklogic/tracklogic-haptic/hpr"
+	"github.com/tracklogic/tracklogic-haptic/pkg/hpr/driver/simagic"
+	"github.com/tracklogic/tracklogic-haptic/pkg/hpr"
 )
 
 func main() {

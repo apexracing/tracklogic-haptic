@@ -6,7 +6,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/tracklogic/tracklogic-haptic/hpr"
+	"github.com/tracklogic/tracklogic-haptic/pkg/hpr"
 )
 
 // SimagicHprDriver is the Simagic implementation of hpr.Driver.

@@ -18,4 +18,7 @@
 //	    Frequency: 30,
 //	    Amplitude: 80,
 //	})
+//
+// hpr lives under pkg/hpr so that import paths reflect that the package is
+// public API surface (per the Go community's pkg/ convention).
 package hpr

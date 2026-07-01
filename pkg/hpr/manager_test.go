@@ -166,14 +166,14 @@ type stubDevice struct {
 	transport Transport
 }
 
-func (s stubDevice) Info() DeviceInfo           { return s.info }
-func (s stubDevice) Capabilities() Capabilities { return Capabilities{} }
-func (s stubDevice) Vibrate(Command) error      { return nil }
-func (s stubDevice) Stop(Target) error          { return nil }
-func (s stubDevice) StopAll() error             { return nil }
-func (s stubDevice) Close() error               { return s.transport.Close() }
+func (s stubDevice) Info() DeviceInfo             { return s.info }
+func (s stubDevice) Capabilities() Capabilities   { return Capabilities{} }
+func (s stubDevice) Vibrate(Command) error       { return nil }
+func (s stubDevice) Stop(Target) error           { return nil }
+func (s stubDevice) StopAll() error              { return nil }
+func (s stubDevice) Close() error                { return s.transport.Close() }
 
 type stubTransport struct{}
 
 func (stubTransport) SetFeature([]byte) error { return nil }
-func (stubTransport) Close() error            { return nil }
+func (stubTransport) Close() error           { return nil }
