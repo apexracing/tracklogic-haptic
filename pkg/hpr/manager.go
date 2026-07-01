@@ -1,33 +1,22 @@
 package hpr
 
-// Manager is the registry that wires together a DeviceScanner,
-// a TransportOpener, and a set of Driver implementations. Callers
-// build one with NewManager and call Scan to enumerate supported
-// devices; opening a device goes through the ScannedDevice returned
-// by Scan, not through Manager.
+// Manager is the registry that wires together a set of Driver
+// implementations and a platform scanner. Callers build one with
+// NewManager and call Scan to enumerate supported devices; opening
+// a device goes through the ScannedDevice returned by Scan.
 type Manager struct {
-	drivers []driver
-	scanner DeviceScanner
-	opener  TransportOpener
+	drivers []Driver
 }
 
 // Option mutates a Manager during construction.
 type Option func(*Manager)
 
-// NewManager constructs a Manager with sensible platform defaults:
-// on Windows the scanner walks Raw Input devices and the opener
-// builds HID transports. Callers then register drivers via
-// WithDrivers.
+// NewManager constructs a Manager. Drivers are added via WithDrivers;
+// the platform scanner is selected at build time (Windows for v1.0).
 func NewManager(options ...Option) *Manager {
 	m := &Manager{}
 	for _, option := range options {
 		option(m)
-	}
-	if m.scanner == nil {
-		m.scanner = defaultDeviceScanner()
-	}
-	if m.opener == nil {
-		m.opener = defaultTransportOpener()
 	}
 	return m
 }
@@ -36,45 +25,26 @@ func NewManager(options ...Option) *Manager {
 // first driver whose Match returns true for a given device claims it.
 func WithDrivers(drivers ...Driver) Option {
 	return func(m *Manager) {
-		for _, d := range drivers {
-			m.drivers = append(m.drivers, d)
-		}
+		m.drivers = append(m.drivers, drivers...)
 	}
 }
 
-// WithDeviceScanner overrides the default device scanner. Useful
-// for tests and for callers that want to feed a synthetic device
-// list (e.g. a CLI flag for a fixed path).
-func WithDeviceScanner(scanner DeviceScanner) Option {
-	return func(m *Manager) {
-		if scanner != nil {
-			m.scanner = scanner
-		}
-	}
-}
-
-// WithTransportOpener overrides the default transport opener. The
-// default is platform-appropriate (Windows HID). Override to plug
-// in a custom backend, e.g. for a CI test harness.
-func WithTransportOpener(opener TransportOpener) Option {
-	return func(m *Manager) {
-		if opener != nil {
-			m.opener = opener
-		}
-	}
+// scanDevicesImpl is the platform-private device-discovery entry
+// point used by Scan. It is normally set by transport_windows.go
+// (or by transport_other.go to return a "not supported" error).
+// Tests in this package may swap it via the package-private hook
+// below so Manager can be exercised without real HID hardware.
+var scanDevicesImpl = func() ([]DeviceInfo, error) {
+	panic("hpr: no platform default installed; only Windows is supported in v1.0")
 }
 
 // Scan enumerates the system for devices claimed by any registered
 // driver. The returned slice is filtered: devices no driver matches
 // are dropped. Each entry is enriched by the claiming driver's
 // Describe (which sets vendor-specific fields such as Model) and
-// paired with an Open closure that captures the right driver and
-// transport opener — callers never have to re-resolve the driver.
+// paired with an Open closure that calls the same driver's Open.
 func (m *Manager) Scan() ([]ScannedDevice, error) {
-	if m.scanner == nil {
-		return nil, ErrNoDevices
-	}
-	raw, err := m.scanner.ScanDevices()
+	raw, err := scanDevicesImpl()
 	if err != nil {
 		return nil, err
 	}
@@ -87,15 +57,10 @@ func (m *Manager) Scan() ([]ScannedDevice, error) {
 		}
 		info = d.Describe(info)
 		driver := d
-		opener := m.opener
 		out = append(out, ScannedDevice{
 			Info: info,
 			Open: func() (Device, error) {
-				transport, err := opener(info)
-				if err != nil {
-					return nil, err
-				}
-				return driver.Open(info, transport)
+				return driver.Open(info)
 			},
 		})
 	}
@@ -103,7 +68,7 @@ func (m *Manager) Scan() ([]ScannedDevice, error) {
 }
 
 // claim returns the first driver that matches info.
-func (m *Manager) claim(info DeviceInfo) (driver, bool) {
+func (m *Manager) claim(info DeviceInfo) (Driver, bool) {
 	for _, d := range m.drivers {
 		if d.Match(info) {
 			return d, true

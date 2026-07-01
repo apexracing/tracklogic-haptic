@@ -3,9 +3,7 @@
 package hpr
 
 // Target identifies a physical axis on a haptic device
-// (clutch / brake / throttle). The set is universal across the
-// supported drivers — concrete devices may implement a subset,
-// surfaced through the absence of a no-op rather than via flags.
+// (clutch / brake / throttle).
 type Target uint8
 
 const (
@@ -53,8 +51,8 @@ type Command struct {
 }
 
 // DeviceInfo describes a discovered device. It is produced by the
-// underlying platform scanner and may be enriched by the claiming
-// driver with vendor-specific data (see Model).
+// platform scanner and may be enriched by the claiming driver with
+// vendor-specific data (see Model).
 type DeviceInfo struct {
 	// Model is a driver-specific identifier. Callers that need to
 	// interpret it should type-assert to the relevant vendor type

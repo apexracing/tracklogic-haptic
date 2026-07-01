@@ -34,22 +34,27 @@ func p1000Info() hpr.DeviceInfo {
 	}
 }
 
-func TestDriver_OpenSendsInitialStopAll(t *testing.T) {
-	transport := &mockTransport{}
-	if _, err := NewDriver().Open(p1000Info(), transport); err != nil {
-		t.Fatalf("Open: %v", err)
+// newDeviceWith builds a device around a fresh mockTransport. The
+// returned mockTransport lets callers inspect what was sent.
+func newDeviceWith(t *testing.T) (*device, *mockTransport) {
+	t.Helper()
+	mt := &mockTransport{}
+	dev, err := newDevice(p1000Info(), mt)
+	if err != nil {
+		t.Fatalf("newDevice: %v", err)
 	}
-	if got := len(transport.features); got != 3 {
-		t.Fatalf("Open should send 3 stop packets, got %d", got)
+	return dev.(*device), mt
+}
+
+func TestDriver_OpenSendsInitialStopAll(t *testing.T) {
+	_, mt := newDeviceWith(t)
+	if got := len(mt.features); got != 3 {
+		t.Fatalf("newDevice should send 3 stop packets, got %d", got)
 	}
 }
 
 func TestDriver_VibratePacketAndDedup(t *testing.T) {
-	transport := &mockTransport{}
-	dev, err := NewDriver().Open(p1000Info(), transport)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	dev, mt := newDeviceWith(t)
 	cmd := hpr.Command{Target: hpr.TargetBrake, State: hpr.On, Frequency: 25, Amplitude: 80}
 	if err := dev.Vibrate(cmd); err != nil {
 		t.Fatalf("Vibrate: %v", err)
@@ -57,10 +62,10 @@ func TestDriver_VibratePacketAndDedup(t *testing.T) {
 	if err := dev.Vibrate(cmd); err != nil {
 		t.Fatalf("duplicate Vibrate: %v", err)
 	}
-	if got := len(transport.features); got != 4 {
+	if got := len(mt.features); got != 4 {
 		t.Fatalf("duplicate command should not send another packet, got %d", got)
 	}
-	packet := transport.features[3]
+	packet := mt.features[3]
 	if len(packet) != 64 {
 		t.Fatalf("packet length = %d, want 64", len(packet))
 	}
@@ -73,22 +78,18 @@ func TestDriver_VibratePacketAndDedup(t *testing.T) {
 }
 
 func TestDriver_CloseSendsForcedStopAll(t *testing.T) {
-	transport := &mockTransport{}
-	dev, err := NewDriver().Open(p1000Info(), transport)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	dev, mt := newDeviceWith(t)
 	if err := dev.Vibrate(hpr.Command{Target: hpr.TargetBrake, State: hpr.On, Frequency: 10, Amplitude: 20}); err != nil {
 		t.Fatalf("Vibrate: %v", err)
 	}
-	before := len(transport.features)
+	before := len(mt.features)
 	if err := dev.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if !transport.closed {
+	if !mt.closed {
 		t.Fatal("transport was not closed")
 	}
-	if got := len(transport.features) - before; got != 3 {
+	if got := len(mt.features) - before; got != 3 {
 		t.Fatalf("Close should send 3 forced stop packets, got %d", got)
 	}
 }
@@ -122,8 +123,7 @@ func TestDriver_DescribeSetsModel(t *testing.T) {
 }
 
 func TestDriver_VibrateAfterCloseReturnsErrDeviceClosed(t *testing.T) {
-	transport := &mockTransport{}
-	dev, _ := NewDriver().Open(p1000Info(), transport)
+	dev, _ := newDeviceWith(t)
 	_ = dev.Close()
 	err := dev.Vibrate(hpr.Command{Target: hpr.TargetBrake, State: hpr.On, Frequency: 1, Amplitude: 1})
 	if !errors.Is(err, hpr.ErrDeviceClosed) {
@@ -132,8 +132,7 @@ func TestDriver_VibrateAfterCloseReturnsErrDeviceClosed(t *testing.T) {
 }
 
 func TestDriver_VibrateClampsFrequencyAndAmplitude(t *testing.T) {
-	transport := &mockTransport{}
-	dev, _ := NewDriver().Open(p1000Info(), transport)
+	dev, mt := newDeviceWith(t)
 	if err := dev.Vibrate(hpr.Command{
 		Target:    hpr.TargetBrake,
 		State:     hpr.On,
@@ -142,7 +141,7 @@ func TestDriver_VibrateClampsFrequencyAndAmplitude(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Vibrate: %v", err)
 	}
-	packet := transport.features[3]
+	packet := mt.features[3]
 	if packet[4] != MaxFrequency {
 		t.Fatalf("frequency on wire = %d, want %d", packet[4], MaxFrequency)
 	}

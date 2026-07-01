@@ -2,7 +2,7 @@
 
 面向赛车模拟器外设的 Go 驱动库。
 
-本库以 `pkg/hpr` 包暴露一组稳定接口（`Driver`、`Device`、`Transport`、`DeviceScanner`、`TransportOpener`），并通过 `Manager` 将它们组合起来。具体的厂家驱动作为 `pkg/hpr/driver/<vendor>/` 下的子包存在，核心包对外设类型完全无感——后续会扩展到 wheelbase 力反馈、shifter、handbrake 等。
+本库以 `pkg/hpr` 包暴露一组稳定接口（`Driver`、`Device`），并通过 `Manager` 将它们组合起来。具体的厂家驱动作为 `pkg/hpr/driver/<vendor>/` 下的子包存在，核心包对外设类型完全无感——后续会扩展到 wheelbase 力反馈、shifter、handbrake 等。
 
 ## 状态
 
@@ -79,28 +79,30 @@ go build -o hpr-demo.exe ./examples/hpr-demo
 ```
 ┌────────────────────┐    组装关系    ┌────────────────────┐
 │  hpr.Manager       │───────────────▶│  hpr.Driver(s)     │
-│  + DeviceScanner   │                │  pkg/hpr/driver/   │
-│  + TransportOpener │                │   simagic          │
+│                    │                │  pkg/hpr/driver/   │
+│                    │                │   simagic          │
 │                    │                │  pkg/hpr/driver/   │
 │                    │                │   fanatec (未来)   │
 │                    │                │  pkg/hpr/driver/   │
 │                    │                │   wheelbase (未来) │
 └────────┬───────────┘                └─────────┬──────────┘
          │                                      │
-         │  Scan() → ScannedDevice             │  Open(info, transport)
+         │  Scan() → ScannedDevice             │  Open(info)
          ▼   (Info + Open func)                 ▼
    ┌──────────┐                          ┌────────────┐
-   │ OS / HID │                          │ hpr.Device │
-   │ 扫描层   │                          │  + 厂家私有 │
-   └──────────┘                          │   协议     │
-                                         └─────┬──────┘
-                                               │ SetFeature
-                                               ▼
+   │ internal/│                          │ hpr.Device │
+   │hidtransport│                       │  + 厂家私有 │
+   │(Windows HID)│                       │   协议     │
+   └──────────┘                          └─────┬──────┘
+                                              │ SetFeature
+                                              ▼
                                          ┌────────────┐
-                                         │ hpr.Transport│
-                                         │ (Windows HID)│
+                                         │hidtransport│
+                                         │.Transport  │
                                          └────────────┘
 ```
+
+`Manager` 的设备扫描来自 `internal/hidtransport`（Windows-only），通过 build tag 在 `transport_windows.go` / `transport_other.go` 里装配。`Manager` 本身不持有 transport/scanner/opener 字段——它们是包内实现细节。
 
 ### 设计原则
 
@@ -126,8 +128,9 @@ func (Driver) Describe(info hpr.DeviceInfo) hpr.DeviceInfo {
     info.Model = identify(info)  // 设置厂家私有类型
     return info
 }
-func (Driver) Open(info hpr.DeviceInfo, t hpr.Transport) (hpr.Device, error) {
-    return &device{info: info, transport: t}, nil
+func (Driver) Open(info hpr.DeviceInfo) (hpr.Device, error) {
+    // 自己打开底层 transport（HID / serial / whatever）
+    return &device{info: info}, nil
 }
 
 type device struct { /* ... */ }
@@ -151,7 +154,7 @@ mgr := hpr.NewManager(hpr.WithDrivers(
 | macOS     | ❌    |
 | Linux     | ❌    |
 
-`internal/hidtransport` 是唯一的平台相关代码。新增其他操作系统时，通过 `hpr.WithDeviceScanner` 与 `hpr.WithTransportOpener` 注入自己的实现即可。
+`internal/hidtransport` 是唯一的平台相关代码。新增其他操作系统时，在 `pkg/hpr/` 下加一个 `transport_<os>.go`（build tag 切平台），提供该平台的 `scanDevicesImpl` 即可——调用方 API 不变。
 
 ## 目录结构
 

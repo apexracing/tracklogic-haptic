@@ -10,6 +10,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/tracklogic/tracklogic-peripherals/internal/hidtransport"
 	"github.com/tracklogic/tracklogic-peripherals/pkg/hpr"
 )
 
@@ -27,8 +28,8 @@ const (
 type Driver struct{}
 
 // NewDriver returns a Simagic Driver. It is safe to register
-// multiple instances (e.g. with different config); Manager.Match
-// is per-Driver and order is preserved.
+// multiple instances; Manager.Match is per-Driver and order is
+// preserved.
 func NewDriver() *Driver { return &Driver{} }
 
 // Match implements hpr.Driver. It accepts any device that looks
@@ -48,27 +49,50 @@ func (Driver) Describe(info hpr.DeviceInfo) hpr.DeviceInfo {
 	return info
 }
 
-// Open implements hpr.Driver. It performs an initial "all-stop"
-// sequence over the transport so the device starts in a known
-// quiet state. The caller is expected to pass a DeviceInfo that
-// has already been enriched by Describe.
-func (Driver) Open(info hpr.DeviceInfo, transport hpr.Transport) (hpr.Device, error) {
+// Open implements hpr.Driver. It opens a Windows HID transport for
+// the device and performs an initial "all-stop" sequence so the
+// device starts in a known quiet state.
+func (Driver) Open(info hpr.DeviceInfo) (hpr.Device, error) {
+	t, err := hidtransport.Open(hidtransport.DeviceDescriptor{
+		DevicePath: info.DevicePath,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return newDevice(info, t)
+}
+
+// newDevice constructs a device around an already-opened transport.
+// It performs the initial "all-stop" sequence and closes the
+// transport on failure. Used by Open in production and by tests
+// with a stub Transport.
+func newDevice(info hpr.DeviceInfo, t Transport) (hpr.Device, error) {
 	dev := &device{
 		info:      info,
-		transport: transport,
+		transport: t,
 		last:      make(map[hpr.Target]normalizedCommand, 3),
 	}
 	if err := dev.stopAllLocked(true); err != nil {
+		_ = t.Close()
 		return nil, err
 	}
 	return dev, nil
+}
+
+// Transport is the minimal I/O surface a device needs from the
+// underlying HID transport. It is unexported so the public surface
+// stays free of platform details; the concrete *hidtransport.Transport
+// satisfies it, as do test stubs.
+type Transport interface {
+	SetFeature([]byte) error
+	Close() error
 }
 
 // device is the Simagic implementation of hpr.Device.
 type device struct {
 	mu        sync.Mutex
 	info      hpr.DeviceInfo
-	transport hpr.Transport
+	transport Transport
 	closed    bool
 	last      map[hpr.Target]normalizedCommand
 }
@@ -148,8 +172,9 @@ func (d *device) Close() error {
 	return stopErr
 }
 
-// Pulse is a convenience helper. It is exposed as a package-level
-// function so callers don't need a type assertion.
+// Pulse is a convenience helper. It is exposed as a method on the
+// concrete *device so callers that already hold one (rather than
+// the hpr.Device interface) don't need a type assertion.
 func (d *device) Pulse(target hpr.Target, frequency, amplitude uint8, duration time.Duration) error {
 	if err := d.Vibrate(hpr.Command{Target: target, State: hpr.On, Frequency: frequency, Amplitude: amplitude}); err != nil {
 		return err

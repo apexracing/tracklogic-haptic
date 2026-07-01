@@ -5,20 +5,12 @@ import (
 	"testing"
 )
 
-type staticScanner struct {
-	devices []DeviceInfo
-	err     error
-}
-
-func (s staticScanner) ScanDevices() ([]DeviceInfo, error) {
-	return s.devices, s.err
-}
-
 type fakeDriver struct {
 	name     string
 	match    bool
 	describe func(DeviceInfo) DeviceInfo
 	opened   int
+	gotInfo  DeviceInfo
 }
 
 func (d *fakeDriver) Match(DeviceInfo) bool { return d.match }
@@ -30,18 +22,25 @@ func (d *fakeDriver) Describe(info DeviceInfo) DeviceInfo {
 	return info
 }
 
-func (d *fakeDriver) Open(info DeviceInfo, t Transport) (Device, error) {
+func (d *fakeDriver) Open(info DeviceInfo) (Device, error) {
 	d.opened++
-	return stubDevice{info: info, transport: t}, nil
+	d.gotInfo = info
+	return stubDevice{info: info}, nil
+}
+
+// withScanner swaps scanDevicesImpl for the duration of the test,
+// restoring the original on cleanup.
+func withScanner(devices []DeviceInfo, err error) func() {
+	orig := scanDevicesImpl
+	scanDevicesImpl = func() ([]DeviceInfo, error) { return devices, err }
+	return func() { scanDevicesImpl = orig }
 }
 
 func TestManager_ScanFiltersByDriverMatch(t *testing.T) {
-	m := NewManager(
-		WithDrivers(&fakeDriver{name: "any", match: true}),
-		WithDeviceScanner(staticScanner{devices: []DeviceInfo{
-			{DevicePath: "a"}, {DevicePath: "b"},
-		}}),
-	)
+	defer withScanner([]DeviceInfo{
+		{DevicePath: "a"}, {DevicePath: "b"},
+	}, nil)()
+	m := NewManager(WithDrivers(&fakeDriver{name: "any", match: true}))
 	got, err := m.Scan()
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -52,10 +51,8 @@ func TestManager_ScanFiltersByDriverMatch(t *testing.T) {
 }
 
 func TestManager_ScanDropsUnmatchedDevices(t *testing.T) {
-	m := NewManager(
-		WithDrivers(&fakeDriver{name: "picky", match: false}),
-		WithDeviceScanner(staticScanner{devices: []DeviceInfo{{DevicePath: "x"}}}),
-	)
+	defer withScanner([]DeviceInfo{{DevicePath: "x"}}, nil)()
+	m := NewManager(WithDrivers(&fakeDriver{name: "picky", match: false}))
 	got, err := m.Scan()
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -65,19 +62,13 @@ func TestManager_ScanDropsUnmatchedDevices(t *testing.T) {
 	}
 }
 
-func TestManager_DriverRegistrationOrderWins(t *testing.T) {
-	first := &fakeDriver{name: "first", match: true}
-	second := &fakeDriver{name: "second", match: true}
-	m := NewManager(
-		WithDrivers(first, second),
-		WithDeviceScanner(staticScanner{devices: []DeviceInfo{{DevicePath: "x"}}}),
-	)
-	got, _ := m.Scan()
-	if got[0].Info.DevicePath != "x" {
-		t.Fatalf("unexpected device: %+v", got[0].Info)
-	}
-	if first.opened != 0 || second.opened != 0 {
-		t.Fatalf("Scan should not open devices, got first=%d second=%d", first.opened, second.opened)
+func TestManager_ScanDoesNotOpenDevices(t *testing.T) {
+	d := &fakeDriver{name: "any", match: true}
+	defer withScanner([]DeviceInfo{{DevicePath: "x"}}, nil)()
+	m := NewManager(WithDrivers(d))
+	_, _ = m.Scan()
+	if d.opened != 0 {
+		t.Fatalf("Scan should not open devices, got %d", d.opened)
 	}
 }
 
@@ -90,10 +81,8 @@ func TestManager_ScanCapturesDescribe(t *testing.T) {
 			return info
 		},
 	}
-	m := NewManager(
-		WithDrivers(d),
-		WithDeviceScanner(staticScanner{devices: []DeviceInfo{{DevicePath: "x"}}}),
-	)
+	defer withScanner([]DeviceInfo{{DevicePath: "x"}}, nil)()
+	m := NewManager(WithDrivers(d))
 	got, _ := m.Scan()
 	if got[0].Info.Model != "decorated" {
 		t.Fatalf("Model = %v, want \"decorated\"", got[0].Info.Model)
@@ -102,15 +91,8 @@ func TestManager_ScanCapturesDescribe(t *testing.T) {
 
 func TestManager_ScannedDeviceOpenUsesClaimedDriver(t *testing.T) {
 	d := &fakeDriver{name: "track", match: true}
-	// Use a fake opener to avoid touching the real Windows API.
-	fakeOpener := func(info DeviceInfo) (Transport, error) {
-		return stubTransport{}, nil
-	}
-	m := NewManager(
-		WithDrivers(d),
-		WithDeviceScanner(staticScanner{devices: []DeviceInfo{{DevicePath: "x"}}}),
-		WithTransportOpener(fakeOpener),
-	)
+	defer withScanner([]DeviceInfo{{DevicePath: "x"}}, nil)()
+	m := NewManager(WithDrivers(d))
 	got, _ := m.Scan()
 	dev, err := got[0].Open()
 	if err != nil {
@@ -123,18 +105,15 @@ func TestManager_ScannedDeviceOpenUsesClaimedDriver(t *testing.T) {
 	if d.opened != 1 {
 		t.Fatalf("driver.Open called %d times, want 1", d.opened)
 	}
+	if d.gotInfo.DevicePath != "x" {
+		t.Fatalf("driver.Open info = %+v, want DevicePath=x", d.gotInfo)
+	}
 }
 
-func TestManager_ScannedDeviceOpenPropagatesOpenerError(t *testing.T) {
-	d := &fakeDriver{name: "x", match: true}
-	wantErr := errors.New("opener failed")
-	m := NewManager(
-		WithDrivers(d),
-		WithDeviceScanner(staticScanner{devices: []DeviceInfo{{DevicePath: "x"}}}),
-		WithTransportOpener(func(DeviceInfo) (Transport, error) {
-			return nil, wantErr
-		}),
-	)
+func TestManager_ScannedDeviceOpenPropagatesOpenError(t *testing.T) {
+	wantErr := errors.New("open failed")
+	defer withScanner([]DeviceInfo{{DevicePath: "x"}}, nil)()
+	m := NewManager(WithDrivers(&openErrorDriver{err: wantErr}))
 	got, _ := m.Scan()
 	_, err := got[0].Open()
 	if !errors.Is(err, wantErr) {
@@ -144,10 +123,8 @@ func TestManager_ScannedDeviceOpenPropagatesOpenerError(t *testing.T) {
 
 func TestManager_ScanPropagatesScannerError(t *testing.T) {
 	wantErr := errors.New("scanner failed")
-	m := NewManager(
-		WithDrivers(&fakeDriver{name: "any", match: true}),
-		WithDeviceScanner(staticScanner{err: wantErr}),
-	)
+	defer withScanner(nil, wantErr)()
+	m := NewManager(WithDrivers(&fakeDriver{name: "any", match: true}))
 	_, err := m.Scan()
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Scan: got %v, want %v", err, wantErr)
@@ -155,17 +132,19 @@ func TestManager_ScanPropagatesScannerError(t *testing.T) {
 }
 
 type stubDevice struct {
-	info      DeviceInfo
-	transport Transport
+	info DeviceInfo
 }
 
-func (s stubDevice) Info() DeviceInfo        { return s.info }
-func (s stubDevice) Vibrate(Command) error  { return nil }
-func (s stubDevice) Stop(Target) error      { return nil }
-func (s stubDevice) StopAll() error         { return nil }
-func (s stubDevice) Close() error           { return s.transport.Close() }
+func (s stubDevice) Info() DeviceInfo       { return s.info }
+func (s stubDevice) Vibrate(Command) error { return nil }
+func (s stubDevice) Stop(Target) error     { return nil }
+func (s stubDevice) StopAll() error        { return nil }
+func (s stubDevice) Close() error          { return nil }
 
-type stubTransport struct{}
+type openErrorDriver struct {
+	err error
+}
 
-func (stubTransport) SetFeature([]byte) error { return nil }
-func (stubTransport) Close() error           { return nil }
+func (d *openErrorDriver) Match(DeviceInfo) bool           { return true }
+func (d *openErrorDriver) Describe(i DeviceInfo) DeviceInfo { return i }
+func (d *openErrorDriver) Open(DeviceInfo) (Device, error) { return nil, d.err }
