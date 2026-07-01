@@ -1,14 +1,10 @@
 // Package hpr defines the vendor-neutral public API for tracklogic-peripherals.
 //
-// The package exposes three things:
-//
-//   - DeviceInfo / Device / Command: the shape of a haptic device and
-//     how to drive it. Callers only see these.
-//   - Driver: the extension point. Vendor-specific code lives under
-//     driver/<vendor>/ and implements Driver; the platform transport
-//     layer lives under internal/.
-//   - Manager + Options: the composition root. Build one, register
-//     drivers, call Scan.
+// The library targets Windows in v1.0 (HID Raw Input for discovery,
+// HidD_SetFeature for transport). On non-Windows platforms the code
+// will not compile until a corresponding backend is added; there is
+// no runtime "platform not supported" stub because such a stub
+// would carry no information.
 //
 // Typical usage:
 //
@@ -27,13 +23,7 @@
 //
 // There is intentionally no Manager.Open: opening goes through the
 // ScannedDevice returned by Scan, so the Manager does not need to
-// remember which device came from which driver. ScannedDevice.Open
-// carries the right Driver for its device.
-//
-// Transport / device-discovery plumbing is intentionally not part of
-// the public API: it is a single Windows HID backend living under
-// internal/hidtransport, wired into Manager by build tag. New
-// platforms should add their own transport_*.go to this package.
+// remember which device came from which driver.
 //
 // hpr lives under pkg/hpr so that import paths reflect that the
 // package is public API surface (per the Go community's pkg/

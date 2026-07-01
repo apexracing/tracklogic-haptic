@@ -1,5 +1,7 @@
 package hpr
 
+import "github.com/tracklogic/tracklogic-peripherals/internal/hidtransport"
+
 // Manager is the registry that wires together a set of Driver
 // implementations and a platform scanner. Callers build one with
 // NewManager and call Scan to enumerate supported devices; opening
@@ -12,7 +14,7 @@ type Manager struct {
 type Option func(*Manager)
 
 // NewManager constructs a Manager. Drivers are added via WithDrivers;
-// the platform scanner is selected at build time (Windows for v1.0).
+// the platform scanner is wired in at init time (Windows HID).
 func NewManager(options ...Option) *Manager {
 	m := &Manager{}
 	for _, option := range options {
@@ -29,14 +31,41 @@ func WithDrivers(drivers ...Driver) Option {
 	}
 }
 
-// scanDevicesImpl is the platform-private device-discovery entry
-// point used by Scan. It is normally set by transport_windows.go
-// (or by transport_other.go to return a "not supported" error).
-// Tests in this package may swap it via the package-private hook
-// below so Manager can be exercised without real HID hardware.
-var scanDevicesImpl = func() ([]DeviceInfo, error) {
-	panic("hpr: no platform default installed; only Windows is supported in v1.0")
+// init wires the Windows HID scanner into the Manager.
+func init() {
+	scanDevices = func() ([]DeviceInfo, error) {
+		raw, err := hidtransport.NewScanner().Scan()
+		if err != nil {
+			return nil, err
+		}
+		out := make([]DeviceInfo, 0, len(raw))
+		for _, d := range raw {
+			out = append(out, deviceDescriptorToInfo(d))
+		}
+		return out, nil
+	}
 }
+
+// deviceDescriptorToInfo lifts a platform descriptor to the
+// universal hpr.DeviceInfo. Model is filled in later by the
+// claiming driver's Describe.
+func deviceDescriptorToInfo(d hidtransport.DeviceDescriptor) DeviceInfo {
+	return DeviceInfo{
+		DevicePath:    d.DevicePath,
+		FriendlyName:  d.FriendlyName,
+		Manufacturer:  d.Manufacturer,
+		Product:       d.Product,
+		VendorID:      d.VendorID,
+		ProductID:     d.ProductID,
+		VersionNumber: d.VersionNumber,
+		UsagePage:     d.UsagePage,
+		Usage:         d.Usage,
+	}
+}
+
+// scanDevices is the platform-private device-discovery entry point
+// used by Scan. It is installed by init() above.
+var scanDevices func() ([]DeviceInfo, error)
 
 // Scan enumerates the system for devices claimed by any registered
 // driver. The returned slice is filtered: devices no driver matches
@@ -44,7 +73,7 @@ var scanDevicesImpl = func() ([]DeviceInfo, error) {
 // Describe (which sets vendor-specific fields such as Model) and
 // paired with an Open closure that calls the same driver's Open.
 func (m *Manager) Scan() ([]ScannedDevice, error) {
-	raw, err := scanDevicesImpl()
+	raw, err := scanDevices()
 	if err != nil {
 		return nil, err
 	}

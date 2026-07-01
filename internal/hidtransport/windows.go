@@ -1,7 +1,6 @@
-// Package hidtransport is the Windows implementation of the
-// scanner and transport the hpr package consumes. It is internal:
-// the public surface of tracklogic-peripherals is hpr.Driver / hpr.Device
-// / hpr.Transport.
+// Package hidtransport is the Windows HID backend for
+// tracklogic-peripherals. It is internal: only code inside this
+// module may import it.
 //
 // To avoid an import cycle (hpr imports this package, so this
 // package must not import hpr), the public types here are pure

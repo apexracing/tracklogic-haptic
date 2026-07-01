@@ -151,10 +151,10 @@ mgr := hpr.NewManager(hpr.WithDrivers(
 | 操作系统  | 状态  |
 | --------- | ----- |
 | Windows   | ✅ v1.0 |
-| macOS     | ❌    |
-| Linux     | ❌    |
+| macOS     | ❌ 不支持 |
+| Linux     | ❌ 不支持 |
 
-`internal/hidtransport` 是唯一的平台相关代码。新增其他操作系统时，在 `pkg/hpr/` 下加一个 `transport_<os>.go`（build tag 切平台），提供该平台的 `scanDevicesImpl` 即可——调用方 API 不变。
+v1.0 仅 Windows。非 Windows 平台代码无法编译（不存在"平台不支持"运行时 stub）——等到加新平台时再补。
 
 ## 目录结构
 

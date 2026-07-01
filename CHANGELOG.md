@@ -15,6 +15,6 @@
 ### 备注
 
 - 这是首个 v1.0 版本。`pkg/hpr` 公共 API 视为稳定，破坏性变更必须配合主版本号升级。
-- v1.0 仅支持 Windows。跨平台支持计划在后续小版本中提供。
+- v1.0 仅支持 Windows，且非 Windows 平台下代码无法编译——不存在"运行时不支持"占位。
 - 仓库名由最初的 `tracklogic-haptic` 重命名为 `tracklogic-peripherals`，为后续纳入 wheelbase、shifter、handbrake 等外设留出空间；Go module 路径同步更新。
 - 公共 API 在 1.0.0 之前经过几轮精简：去掉了 `Manager.OpenFirst`、`Manager.decorate`、私有 `Describer` 接口、`Capabilities` 类型、`DeviceInfo.DriverName` 字段、以及导出的 `Transport` / `DeviceScanner` / `TransportOpener` 接口和对应的 `WithDeviceScanner` / `WithTransportOpener` 选项——这些都曾是为"未来扩展性"预先添加的抽象，但实际用途都是臆想。库只保留必要抽象：`Scan` 返回带 `Open` 闭包的 `ScannedDevice`，调用方对驱动一无所知；transport / 平台扫描都是包内实现细节，由 `transport_*.go` build tag 文件提供。
