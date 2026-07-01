@@ -2,7 +2,7 @@
 
 赛车模拟器外设的 Go 驱动库。
 
-库对外只暴露一个入口 ——`hpr.Manager` 的 `Scan` ——和一个出口 ——`ScannedDevice.Open`。中间的驱动选择、传输打开、设备构造都是库内部的事。具体的厂家驱动作为 `pkg/hpr/driver/<vendor>/` 子包存在；`hpr` 包对厂家和外设种类都无感。
+`hpr.NewManager(...).Scan()` 列出当前可用的设备，`ScannedDevice.Open()` 拿到一个 `hpr.Device` 来发振动命令。厂家驱动作为 `pkg/hpr/driver/<vendor>/` 子包注册进 Manager。
 
 ## 状态
 
