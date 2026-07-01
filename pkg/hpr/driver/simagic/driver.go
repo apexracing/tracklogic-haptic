@@ -59,14 +59,6 @@ func (Driver) Open(info hpr.DeviceInfo) (hpr.Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newDevice(info, t)
-}
-
-// newDevice constructs a device around an already-opened transport.
-// It performs the initial "all-stop" sequence and closes the
-// transport on failure. Used by Open in production and by tests
-// with a stub Transport.
-func newDevice(info hpr.DeviceInfo, t Transport) (hpr.Device, error) {
 	dev := &device{
 		info:      info,
 		transport: t,
@@ -79,20 +71,11 @@ func newDevice(info hpr.DeviceInfo, t Transport) (hpr.Device, error) {
 	return dev, nil
 }
 
-// Transport is the minimal I/O surface a device needs from the
-// underlying HID transport. It is unexported so the public surface
-// stays free of platform details; the concrete *hidtransport.Transport
-// satisfies it, as do test stubs.
-type Transport interface {
-	SetFeature([]byte) error
-	Close() error
-}
-
 // device is the Simagic implementation of hpr.Device.
 type device struct {
 	mu        sync.Mutex
 	info      hpr.DeviceInfo
-	transport Transport
+	transport *hidtransport.Transport
 	closed    bool
 	last      map[hpr.Target]normalizedCommand
 }

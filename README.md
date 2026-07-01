@@ -156,6 +156,10 @@ mgr := hpr.NewManager(hpr.WithDrivers(
 
 v1.0 仅 Windows。非 Windows 平台代码无法编译（不存在"平台不支持"运行时 stub）——等到加新平台时再补。
 
+## 测试
+
+仓库**没有单元测试**。这个库干的事是往 HID 设备发字节流——单元测试只能验证"代码按我以为的方式组合"，无法验证"设备真的按预期响应"。`go vet` 和 `go build` 是唯一的静态检查；回归靠真硬件手动验证：插上踏板，`go run ./examples/hpr-demo -list` 看到设备，再 `-ch 1 -f 30 -a 80 -d 2s` 观察是否震动。
+
 ## 目录结构
 
 ```
