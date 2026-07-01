@@ -1,3 +1,12 @@
+// Command tracklogic-haptic is a thin CLI over the tracklogic-haptic
+// library. It scans for supported haptic pedal devices, lets the
+// user pick one (or a vendor model), and emits a single vibration
+// command before exiting.
+//
+// Example:
+//
+//	tracklogic-haptic -ch 1 -f 30 -a 80 -d 2s
+//	tracklogic-haptic -list
 package main
 
 import (
@@ -9,7 +18,8 @@ import (
 	"syscall"
 	"time"
 
-	"simagic/hpr"
+	"github.com/tracklogic/tracklogic-haptic/driver/simagic"
+	"github.com/tracklogic/tracklogic-haptic/hpr"
 )
 
 func main() {
@@ -17,23 +27,23 @@ func main() {
 	freq := flag.Int("f", hpr.MaxFrequency, "Frequency 0-50; larger values are clamped")
 	amp := flag.Int("a", hpr.MaxAmplitude, "Amplitude 0-100")
 	duration := flag.Duration("d", 2*time.Second, "Duration (e.g. 3s, 500ms); 0 waits for Ctrl+C")
-	list := flag.Bool("list", false, "List connected Simagic pedals only")
+	list := flag.Bool("list", false, "List connected devices only")
 	flag.Parse()
 
-	manager := hpr.NewManager(hpr.WithDefaultDrivers())
+	manager := hpr.NewManager(hpr.WithDrivers(simagic.NewDriver()))
 
 	if *list {
-		pedals, err := manager.Scan()
+		devices, err := manager.Scan()
 		if err != nil {
 			log.Fatalf("Failed to scan: %v", err)
 		}
-		if len(pedals) == 0 {
-			fmt.Println("No Simagic pedals detected.")
+		if len(devices) == 0 {
+			fmt.Println("No supported devices detected.")
 			return
 		}
-		fmt.Println("Detected Simagic pedals:")
-		for i, p := range pedals {
-			fmt.Printf("  [%d] %s\n    Path: %s\n", i, p.Model, p.DevicePath)
+		fmt.Println("Detected devices:")
+		for i, p := range devices {
+			fmt.Printf("  [%d] %s\n    Path: %s\n", i, modelString(p.Model, p.FriendlyName), p.DevicePath)
 		}
 		return
 	}
@@ -53,19 +63,19 @@ func main() {
 
 	pedals, err := manager.Scan()
 	if err != nil {
-		log.Fatalf("Failed to scan pedals: %v", err)
+		log.Fatalf("Failed to scan: %v", err)
 	}
 	if len(pedals) == 0 {
-		log.Fatal("No Simagic pedals found. Make sure pedals are connected via USB.")
+		log.Fatal("No supported devices found. Make sure pedals are connected via USB.")
 	}
 
-	fmt.Printf("Found %d Simagic pedal(s):\n", len(pedals))
+	fmt.Printf("Found %d device(s):\n", len(pedals))
 	for _, p := range pedals {
-		fmt.Printf("  - %s\n", p.Model)
+		fmt.Printf("  - %s\n", modelString(p.Model, p.FriendlyName))
 	}
 
 	info := pedals[0]
-	fmt.Printf("\nOpening %s ...\n", info.Model)
+	fmt.Printf("\nOpening %s ...\n", modelString(info.Model, info.FriendlyName))
 	dev, err := manager.Open(info)
 	if err != nil {
 		log.Fatalf("Failed to open device: %v", err)
@@ -78,7 +88,7 @@ func main() {
 		fmt.Println("Device closed.")
 	}()
 
-	fmt.Printf("Sending vibration to %s: frequency=%.0f, amplitude=%.0f, duration=%v\n",
+	fmt.Printf("Sending vibration: target=%s, frequency=%.0f, amplitude=%.0f, duration=%v\n",
 		ch, f, a, *duration)
 
 	if err := dev.Vibrate(hpr.Command{
@@ -108,6 +118,16 @@ func main() {
 	if err := dev.Stop(ch); err != nil {
 		log.Fatalf("Failed to stop vibration: %v", err)
 	}
+}
+
+func modelString(m any, fallback string) string {
+	if m, ok := m.(fmt.Stringer); ok {
+		return m.String()
+	}
+	if fallback != "" {
+		return fallback
+	}
+	return "Unknown"
 }
 
 func parseChannel(v int) (hpr.Target, error) {

@@ -1,4 +1,4 @@
-module simagic
+module github.com/tracklogic/tracklogic-haptic
 
 go 1.26.4
 

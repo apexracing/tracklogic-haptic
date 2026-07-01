@@ -1,7 +1,15 @@
-package hpr
+// Package hidtransport is the Windows implementation of the
+// scanner and transport the hpr package consumes. It is internal:
+// the public surface of tracklogic-haptic is hpr.Driver / hpr.Device
+// / hpr.Transport.
+//
+// To avoid an import cycle (hpr imports this package, so this
+// package must not import hpr), the public types here are pure
+// equivalents of the corresponding hpr types. The hpr package
+// converts at the boundary.
+package hidtransport
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"syscall"
@@ -23,8 +31,7 @@ const (
 	fileAttributeNormal = 0x00000080
 )
 
-type windowsDeviceScanner struct{}
-
+// rawInputDeviceList mirrors RAWINPUTDEVICELIST.
 type rawInputDeviceList struct {
 	hDevice windows.Handle
 	Type    uint32
@@ -44,7 +51,23 @@ type rawDeviceInfoHID struct {
 	Usage         uint16
 }
 
-type hidTransport struct {
+// DeviceDescriptor is the platform-native equivalent of
+// hpr.DeviceInfo. Callers (i.e. the hpr package) are responsible
+// for converting to/from hpr.DeviceInfo at the boundary.
+type DeviceDescriptor struct {
+	DevicePath    string
+	FriendlyName  string
+	Manufacturer  string
+	Product       string
+	VendorID      uint16
+	ProductID     uint16
+	VersionNumber uint32
+	UsagePage     uint16
+	Usage         uint16
+}
+
+// Transport is the package's wrapper over an open HID handle.
+type Transport struct {
 	mu     sync.Mutex
 	handle windows.Handle
 }
@@ -62,18 +85,25 @@ var (
 	procHidDGetProductString      = modHid.NewProc("HidD_GetProductString")
 )
 
-func (windowsDeviceScanner) ScanDevices() ([]DeviceInfo, error) {
-	rawDevices, err := getRawInputDeviceList()
+// Scanner walks Raw Input and returns every HID device it sees.
+type Scanner struct{}
+
+// NewScanner returns a Scanner. Exists for symmetry with
+// (hpr.DeviceScanner).
+func NewScanner() *Scanner { return &Scanner{} }
+
+// Scan enumerates Raw Input HID devices.
+func (Scanner) Scan() ([]DeviceDescriptor, error) {
+	raw, err := getRawInputDeviceList()
 	if err != nil {
 		return nil, err
 	}
 
-	devices := make([]DeviceInfo, 0, len(rawDevices))
-	for _, d := range rawDevices {
+	out := make([]DeviceDescriptor, 0, len(raw))
+	for _, d := range raw {
 		if d.Type != rimTypeHID {
 			continue
 		}
-
 		hidInfo, err := getRawInputDeviceInfoHID(d.hDevice)
 		if err != nil {
 			continue
@@ -82,46 +112,44 @@ func (windowsDeviceScanner) ScanDevices() ([]DeviceInfo, error) {
 		if err != nil {
 			continue
 		}
-
 		manufacturer, product, friendlyName := readFriendlyName(deviceName)
 		if friendlyName == "" {
-			friendlyName = getFallbackFriendlyName(deviceName)
+			friendlyName = deviceName
 		}
-
-		devices = append(devices, DeviceInfo{
+		out = append(out, DeviceDescriptor{
 			DevicePath:    deviceName,
 			FriendlyName:  friendlyName,
 			Manufacturer:  manufacturer,
 			Product:       product,
-			VendorID:      hidInfo.VendorID,
-			ProductID:     hidInfo.ProductID,
+			VendorID:      uint16(hidInfo.VendorID),
+			ProductID:     uint16(hidInfo.ProductID),
 			VersionNumber: hidInfo.VersionNumber,
 			UsagePage:     hidInfo.UsagePage,
 			Usage:         hidInfo.Usage,
 		})
 	}
-	return devices, nil
+	return out, nil
 }
 
-func openHIDTransport(info DeviceInfo) (Transport, error) {
-	handle, err := createFile(info.DevicePath)
+// Open opens a transport for the given device descriptor's path.
+func Open(desc DeviceDescriptor) (*Transport, error) {
+	h, err := createFile(desc.DevicePath)
 	if err != nil {
 		return nil, err
 	}
-	return &hidTransport{handle: handle}, nil
+	return &Transport{handle: h}, nil
 }
 
-func (t *hidTransport) SetFeature(data []byte) error {
+// SetFeature sends a HID feature report.
+func (t *Transport) SetFeature(data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}
-
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.handle == 0 {
-		return ErrDeviceClosed
+		return errClosed
 	}
-
 	ret, _, callErr := procHidDSetFeature.Call(
 		uintptr(t.handle),
 		uintptr(unsafe.Pointer(&data[0])),
@@ -129,35 +157,54 @@ func (t *hidTransport) SetFeature(data []byte) error {
 	)
 	if ret == 0 {
 		if callErr != syscall.Errno(0) {
-			return fmt.Errorf("HidD_SetFeature failed: len=%d data=% X: %w", len(data), data, callErr)
+			return errCall("HidD_SetFeature", callErr)
 		}
-		return fmt.Errorf("HidD_SetFeature failed: len=%d data=% X", len(data), data)
+		return errSetFeatureFailed
 	}
 	return nil
 }
 
-func (t *hidTransport) Close() error {
+// Close releases the underlying handle. Safe to call more than once.
+func (t *Transport) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.handle == 0 {
 		return nil
 	}
-
 	err := windows.CloseHandle(t.handle)
 	t.handle = 0
 	return err
 }
 
+// --- internal: syscall helpers and error sentinels ---
+
+var (
+	errClosed           = stringError("hidtransport: transport is closed")
+	errSetFeatureFailed = stringError("hidtransport: HidD_SetFeature failed")
+)
+
+type stringError string
+
+func (e stringError) Error() string { return string(e) }
+
+type callError struct {
+	op  string
+	err error
+}
+
+func (e *callError) Error() string { return e.op + ": " + e.err.Error() }
+
+func errCall(op string, err error) error { return &callError{op: op, err: err} }
+
 func getRawInputDeviceList() ([]rawInputDeviceList, error) {
 	var numDevices uint32
 	ret, _, _ := procGetRawInputDeviceList.Call(0, uintptr(unsafe.Pointer(&numDevices)), unsafe.Sizeof(rawInputDeviceList{}))
 	if ret == 0xFFFFFFFF {
-		return nil, fmt.Errorf("GetRawInputDeviceList failed to get count")
+		return nil, stringError("GetRawInputDeviceList: count failed")
 	}
 	if numDevices == 0 {
 		return nil, nil
 	}
-
 	devices := make([]rawInputDeviceList, numDevices)
 	ret, _, _ = procGetRawInputDeviceList.Call(
 		uintptr(unsafe.Pointer(&devices[0])),
@@ -165,7 +212,7 @@ func getRawInputDeviceList() ([]rawInputDeviceList, error) {
 		unsafe.Sizeof(rawInputDeviceList{}),
 	)
 	if ret == 0xFFFFFFFF {
-		return nil, fmt.Errorf("GetRawInputDeviceList failed to enumerate")
+		return nil, stringError("GetRawInputDeviceList: enumerate failed")
 	}
 	return devices[:numDevices], nil
 }
@@ -176,12 +223,11 @@ func getRawInputDeviceName(hDevice windows.Handle) (string, error) {
 		uintptr(hDevice), ridiDeviceName, 0, uintptr(unsafe.Pointer(&size)),
 	)
 	if ret == 0xFFFFFFFF {
-		return "", fmt.Errorf("GetRawInputDeviceInfoW failed to get size")
+		return "", stringError("GetRawInputDeviceInfoW: size failed")
 	}
 	if size == 0 {
 		return "", nil
 	}
-
 	buf := make([]uint16, size)
 	ret, _, _ = procGetRawInputDeviceInfoW.Call(
 		uintptr(hDevice), ridiDeviceName,
@@ -189,7 +235,7 @@ func getRawInputDeviceName(hDevice windows.Handle) (string, error) {
 		uintptr(unsafe.Pointer(&size)),
 	)
 	if ret == 0xFFFFFFFF {
-		return "", fmt.Errorf("GetRawInputDeviceInfoW failed to get name")
+		return "", stringError("GetRawInputDeviceInfoW: name failed")
 	}
 	return windows.UTF16ToString(buf), nil
 }
@@ -198,7 +244,6 @@ func getRawInputDeviceInfoHID(hDevice windows.Handle) (*rawDeviceInfoHID, error)
 	var info rawInputDeviceInfo
 	info.Size = uint32(unsafe.Sizeof(info))
 	size := info.Size
-
 	ret, _, callErr := procGetRawInputDeviceInfoW.Call(
 		uintptr(hDevice), ridiDeviceInfo,
 		uintptr(unsafe.Pointer(&info)),
@@ -206,11 +251,10 @@ func getRawInputDeviceInfoHID(hDevice windows.Handle) (*rawDeviceInfoHID, error)
 	)
 	if ret == 0xFFFFFFFF {
 		if callErr != syscall.Errno(0) {
-			return nil, fmt.Errorf("GetRawInputDeviceInfoW (DEVICEINFO) failed: %w", callErr)
+			return nil, errCall("GetRawInputDeviceInfoW(DEVICEINFO)", callErr)
 		}
-		return nil, fmt.Errorf("GetRawInputDeviceInfoW (DEVICEINFO) failed")
+		return nil, stringError("GetRawInputDeviceInfoW(DEVICEINFO) failed")
 	}
-
 	hid := *(*rawDeviceInfoHID)(unsafe.Pointer(&info.Data[0]))
 	return &hid, nil
 }
@@ -220,7 +264,6 @@ func createFile(devicePath string) (windows.Handle, error) {
 	if err != nil {
 		return 0, err
 	}
-
 	handle, _, callErr := procCreateFileW.Call(
 		uintptr(unsafe.Pointer(pathPtr)),
 		genericRead|genericWrite,
@@ -230,12 +273,11 @@ func createFile(devicePath string) (windows.Handle, error) {
 		fileAttributeNormal,
 		0,
 	)
-
 	if handle == 0 || handle == ^uintptr(0) {
 		if callErr != syscall.Errno(0) {
-			return 0, fmt.Errorf("CreateFileW failed: devicePath=%s: %w", devicePath, callErr)
+			return 0, errCall("CreateFileW", callErr)
 		}
-		return 0, fmt.Errorf("CreateFileW failed: devicePath=%s", devicePath)
+		return 0, stringError("CreateFileW failed")
 	}
 	return windows.Handle(handle), nil
 }
@@ -246,7 +288,6 @@ func readFriendlyName(devicePath string) (manufacturer, product, friendlyName st
 		return "", "", ""
 	}
 	defer windows.CloseHandle(handle)
-
 	manufacturer = readHIDString(handle, procHidDGetManufacturerString)
 	product = readHIDString(handle, procHidDGetProductString)
 	switch {
@@ -270,19 +311,22 @@ func readHIDString(handle windows.Handle, proc *windows.LazyProc) string {
 	if ret == 0 {
 		return ""
 	}
-	return strings.TrimSpace(windows.UTF16ToString(buf))
+	return strings.TrimSpace(utf16SliceToString(buf))
 }
 
-func getFallbackFriendlyName(path string) string {
-	upper := strings.ToUpper(path)
-	if !strings.Contains(upper, "VID_3670") && !strings.Contains(upper, "VID_0483") {
-		return ""
-	}
-
-	for _, part := range strings.Split(path, "#") {
-		if strings.HasPrefix(strings.ToUpper(part), "VID_") {
-			return part
+func utf16SliceToString(buf []uint16) string {
+	for i, r := range buf {
+		if r == 0 {
+			return string(utf16Decode(buf[:i]))
 		}
 	}
-	return ""
+	return string(utf16Decode(buf))
+}
+
+func utf16Decode(b []uint16) []rune {
+	out := make([]rune, 0, len(b))
+	for _, r := range b {
+		out = append(out, rune(r))
+	}
+	return out
 }
