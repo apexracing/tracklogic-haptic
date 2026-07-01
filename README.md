@@ -1,16 +1,16 @@
 # tracklogic-peripherals
 
-面向赛车模拟器外设的 Go 驱动库。
+赛车模拟器外设的 Go 驱动库。
 
-本库以 `pkg/hpr` 包暴露一组稳定接口（`Driver`、`Device`），并通过 `Manager` 将它们组合起来。具体的厂家驱动作为 `pkg/hpr/driver/<vendor>/` 下的子包存在，核心包对外设类型完全无感——后续会扩展到 wheelbase 力反馈、shifter、handbrake 等。
+库对外只暴露一个入口 ——`hpr.Manager` 的 `Scan` ——和一个出口 ——`ScannedDevice.Open`。中间的驱动选择、传输打开、设备构造都是库内部的事。具体的厂家驱动作为 `pkg/hpr/driver/<vendor>/` 子包存在；`hpr` 包对厂家和外设种类都无感。
 
 ## 状态
 
-**v1.0.0** — 仅支持 Windows。当前已支持的设备：
+**v1.0.0** — 仅 Windows。当前已支持的设备：
 
-| 厂家       | 包                                            | 型号                                       |
-| ---------- | --------------------------------------------- | ------------------------------------------ |
-| Simagic    | `pkg/hpr/driver/simagic`                      | P500、P700、P1000、P2000、Alpha Pedal Neo  |
+| 厂家    | 包                       | 型号                                          |
+| ------- | ------------------------ | --------------------------------------------- |
+| Simagic | `pkg/hpr/driver/simagic` | P500、P700、P1000、P2000、Alpha Pedal Neo     |
 
 ## 安装
 
@@ -59,85 +59,166 @@ func main() {
 }
 ```
 
-注意：`Manager` 只负责扫描和路由驱动；调用方拿到的是 `ScannedDevice`，`Open` 直接挂在它上面。
+完整步骤：
+
+1. `NewManager` 构造
+2. `WithDrivers(...)` 注册要识别的厂家驱动
+3. `Scan` 拿设备列表
+4. 选一个 `ScannedDevice`，调它的 `Open` 拿到 `Device`
+5. `Vibrate` / `Stop` / `Close`
 
 ## 命令行示例
 
-`examples/hpr-demo` 是一个**可独立运行的示例程序**——既能 `go run` 也能 `go build` 出二进制。它演示了如何扫描、打开、发送振动命令的最简流程：
+`examples/hpr-demo` 是可独立运行的示例程序，`go run` 或 `go build` 都行：
 
 ```sh
 go run ./examples/hpr-demo -list
 go run ./examples/hpr-demo -ch 1 -f 30 -a 80 -d 2s
 
-# 或编译成独立二进制
 go build -o hpr-demo.exe ./examples/hpr-demo
 ./hpr-demo.exe -list
 ```
 
+## 公共 API
+
+`pkg/hpr` 包对外的全部类型：
+
+```go
+// 命令数据
+type Target uint8           // TargetClutch / TargetBrake / TargetThrottle
+type State uint8            // Off / On
+type Command struct {       // Vibrate 的入参
+    Target    Target
+    State     State
+    Frequency uint8         // 0..50
+    Amplitude uint8         // 0..100
+}
+
+// 设备视图
+type DeviceInfo struct {    // Scan 返回的描述
+    Model          any      // 厂家私有（type-assert 到 simagic.Model 等）
+    DevicePath     string
+    FriendlyName   string
+    Manufacturer   string
+    Product        string
+    VendorID       uint16
+    ProductID      uint16
+    VersionNumber  uint32
+    UsagePage      uint16
+    Usage          uint16
+}
+
+type ScannedDevice struct { // Scan 返回
+    Info DeviceInfo
+    Open func() (Device, error)
+}
+
+type Device interface {     // Open 返回
+    Info() DeviceInfo
+    Vibrate(Command) error
+    Stop(Target) error
+    Close() error
+}
+
+type Driver interface {     // 注册到 Manager 的扩展点
+    Match(DeviceInfo) bool
+    Describe(DeviceInfo) DeviceInfo
+    Open(DeviceInfo) (Device, error)
+}
+
+// 入口
+func NewManager(opts ...Option) *Manager
+func WithDrivers(drivers ...Driver) Option
+func (m *Manager) Scan() ([]ScannedDevice, error)
+
+// 错误
+var ErrNoDevices = ...
+var ErrDeviceClosed = ...
+var ErrUnsupported = ...
+```
+
+整个 surface 就这些。
+
 ## 架构
 
 ```
-┌────────────────────┐    组装关系    ┌────────────────────┐
-│  hpr.Manager       │───────────────▶│  hpr.Driver(s)     │
-│                    │                │  pkg/hpr/driver/   │
-│                    │                │   simagic          │
-│                    │                │  pkg/hpr/driver/   │
-│                    │                │   fanatec (未来)   │
-│                    │                │  pkg/hpr/driver/   │
-│                    │                │   wheelbase (未来) │
-└────────┬───────────┘                └─────────┬──────────┘
-         │                                      │
-         │  Scan() → ScannedDevice             │  Open(info)
-         ▼   (Info + Open func)                 ▼
-   ┌──────────┐                          ┌────────────┐
-   │ internal/│                          │ hpr.Device │
-   │hidtransport│                       │  + 厂家私有 │
-   │(Windows HID)│                       │   协议     │
-   └──────────┘                          └─────┬──────┘
-                                              │ SetFeature
-                                              ▼
-                                         ┌────────────┐
-                                         │hidtransport│
-                                         │.Transport  │
-                                         └────────────┘
+调用方
+  │
+  │  hpr.NewManager(WithDrivers(simagic.NewDriver()))
+  │  mgr.Scan() → []ScannedDevice
+  │  sd.Open()   → hpr.Device
+  ▼
+┌────────────────────────────────────────────────────────┐
+│  pkg/hpr                                               │
+│  ──────                                                │
+│   types.go   Target / State / Command / DeviceInfo /   │
+│              ScannedDevice / Device / Driver / 错误    │
+│   manager.go Manager + WithDrivers + Scan              │
+│              + init() 装配 Windows HID 扫描            │
+└──────┬────────────────────────────────────────┬────────┘
+       │                                        │
+       │ 调用                                   │ 打开
+       ▼ 驱动                                    ▼
+┌──────────────┐                        ┌───────────────────┐
+│ pkg/hpr/driver│                        │ internal/hidtransport│
+│  /simagic    │ ──── 直接 import ────▶ │ windows.go         │
+│              │                        │  Win32 HID backend │
+└──────────────┘                        └───────────────────┘
 ```
 
-`Manager` 的设备扫描来自 `internal/hidtransport`（Windows-only），通过 build tag 在 `transport_windows.go` / `transport_other.go` 里装配。`Manager` 本身不持有 transport/scanner/opener 字段——它们是包内实现细节。
-
-### 设计原则
-
-1. **`hpr` 包对外设完全无感**。它不能 import `pkg/hpr/driver/` 下的任何子包。新增外设类型或厂家不需要改动 `hpr`。
-2. **驱动是无状态工厂**。所有设备状态都保存在 `Driver.Open` 返回的 `Device` 上。
-3. **`Scan` 一次性绑定驱动**。调用方拿到的 `ScannedDevice.Open` 已经知道该用哪个 driver；`Manager` 不再负责二次路由。
-4. **厂家私有数据在厂家包里保持强类型**。`DeviceInfo.Model` 的类型是 `any`；需要解释时请用类型断言或类型 switch 拿到厂家包里的具体类型（如 `simagic.Model`）。
-5. **没有全局状态**。不存在包级单例，每次使用都通过 `hpr.NewManager` 显式构造。
+`hpr` 不知道也不关心下面是哪家驱动、`hidtransport` 不知道也不关心上面是哪家驱动。两层解耦靠 driver 包同时 import 这两个实现。
 
 ## 扩展：编写新驱动
 
 ```go
 package myvendor
 
-import "github.com/tracklogic/tracklogic-peripherals/pkg/hpr"
+import (
+    "github.com/tracklogic/tracklogic-peripherals/internal/hidtransport"
+    "github.com/tracklogic/tracklogic-peripherals/pkg/hpr"
+)
 
 type Driver struct{}
 
 func NewDriver() *Driver { return &Driver{} }
 
-func (Driver) Match(info hpr.DeviceInfo) bool { /* 按 VID/PID 判定 */ }
+// Match: 这个 Driver 认领哪些设备
+func (Driver) Match(info hpr.DeviceInfo) bool {
+    // 按 VID/PID / Usage / FriendlyName 判断
+    return info.VendorID == 0x1234 && info.ProductID == 0x5678
+}
+
+// Describe: 给 DeviceInfo 填厂家私有字段（通常是 Model）
 func (Driver) Describe(info hpr.DeviceInfo) hpr.DeviceInfo {
-    info.Model = identify(info)  // 设置厂家私有类型
+    info.Model = ModelMyProduct
     return info
 }
+
+// Open: 拿到一个 hpr.Device，自己负责 transport 生命周期
 func (Driver) Open(info hpr.DeviceInfo) (hpr.Device, error) {
-    // 自己打开底层 transport（HID / serial / whatever）
-    return &device{info: info}, nil
+    t, err := hidtransport.Open(hidtransport.DeviceDescriptor{
+        DevicePath: info.DevicePath,
+    })
+    if err != nil {
+        return nil, err
+    }
+    return &device{info: info, transport: t}, nil
 }
 
-type device struct { /* ... */ }
-// 实现 hpr.Device（Info / Vibrate / Stop / StopAll / Close）
+type device struct {
+    info      hpr.DeviceInfo
+    transport *hidtransport.Transport  // 或自定义 backend
+    // ... 任何 driver 需要的私有状态
+}
+
+// 实现 hpr.Device：Info / Vibrate / Stop / Close
+func (d *device) Close() error {
+    // 先把所有 target 停掉（如果适用），再关 transport
+    return d.transport.Close()
+}
 ```
 
-注册方式同上：
+注册：
 
 ```go
 mgr := hpr.NewManager(hpr.WithDrivers(
@@ -146,32 +227,48 @@ mgr := hpr.NewManager(hpr.WithDrivers(
 ))
 ```
 
+注册顺序决定优先级 ——`Scan` 遍历 driver，第一个 `Match` 赢。
+
 ## 平台支持
 
-| 操作系统  | 状态  |
-| --------- | ----- |
-| Windows   | ✅ v1.0 |
-| macOS     | ❌ 不支持 |
-| Linux     | ❌ 不支持 |
+| 操作系统 | 状态      |
+| -------- | --------- |
+| Windows  | ✅ v1.0   |
+| macOS    | ❌ 不支持 |
+| Linux    | ❌ 不支持 |
 
-v1.0 仅 Windows。非 Windows 平台代码无法编译（不存在"平台不支持"运行时 stub）——等到加新平台时再补。
+非 Windows 平台**不提供运行时 stub**——`internal/hidtransport` 直接调 Win32 API，跨平台时构建会失败。等到加新平台时再补。
 
 ## 测试
 
-仓库**没有单元测试**。这个库干的事是往 HID 设备发字节流——单元测试只能验证"代码按我以为的方式组合"，无法验证"设备真的按预期响应"。`go vet` 和 `go build` 是唯一的静态检查；回归靠真硬件手动验证：插上踏板，`go run ./examples/hpr-demo -list` 看到设备，再 `-ch 1 -f 30 -a 80 -d 2s` 观察是否震动。
+仓库**没有单元测试**。这是驱动层代码，单元测试只能验证"代码按我以为的方式组合"，无法验证"设备真的响应"。`go vet` 和 `go build` 是仅有的静态检查；回归靠真硬件手动验证：
+
+```sh
+# 1. 插上踏板，确认能看到
+go run ./examples/hpr-demo -list
+
+# 2. 让刹车震 2 秒
+go run ./examples/hpr-demo -ch 1 -f 30 -a 80 -d 2s
+```
+
+`StopAll`、`OpenFirst`、`Capabilities`、`DeviceInfo.DriverName` 之类的方法/字段在 1.0.0 之前都被去掉了——它们曾是"未来扩展性"的占位，但实际用途都是臆想。库只保留调用方真实需要的东西。
 
 ## 目录结构
 
 ```
 .
 ├── pkg/
-│   └── hpr/                  # 与厂家无关的公共 API
+│   └── hpr/
+│       ├── doc.go                       # 包注释
+│       ├── types.go                     # 公开 API
+│       ├── manager.go                   # Manager + Windows HID init
 │       └── driver/
-│           └── simagic/      # Simagic 驱动
+│           └── simagic/                 # Simagic 驱动
 ├── internal/
-│   └── hidtransport/         # Windows HID 传输层（internal）
+│   └── hidtransport/
+│       └── windows.go                   # Win32 HID 后端
 └── examples/
-    └── hpr-demo/             # 可运行的示例程序
+    └── hpr-demo/                        # 可运行的示例程序
 ```
 
 ## 许可证
