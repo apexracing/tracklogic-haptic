@@ -124,10 +124,6 @@ type Device interface {
 	// a programming error and returns an error.
 	Stop(Target) error
 
-	// StopAll turns off every target on the device. It is called by
-	// Close.
-	StopAll() error
-
 	// Close releases the device and the underlying transport. It is
 	// safe to call more than once; subsequent calls return nil.
 	Close() error

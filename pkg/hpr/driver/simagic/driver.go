@@ -64,7 +64,7 @@ func (Driver) Open(info hpr.DeviceInfo) (hpr.Device, error) {
 		transport: t,
 		last:      make(map[hpr.Target]normalizedCommand, 3),
 	}
-	if err := dev.stopAllLocked(true); err != nil {
+	if err := dev.stopAll(true); err != nil {
 		_ = t.Close()
 		return nil, err
 	}
@@ -125,16 +125,6 @@ func (d *device) Stop(target hpr.Target) error {
 	return d.sendLocked(normalizedCommand{target: target, state: hpr.Off}, false)
 }
 
-// StopAll implements hpr.Device.
-func (d *device) StopAll() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if err := d.ensureOpenLocked(); err != nil {
-		return err
-	}
-	return d.stopAllLocked(false)
-}
-
 // Close implements hpr.Device. It performs a forced all-stop and
 // then closes the transport.
 func (d *device) Close() error {
@@ -146,7 +136,7 @@ func (d *device) Close() error {
 	if d.closed {
 		return nil
 	}
-	stopErr := d.stopAllLocked(true)
+	stopErr := d.stopAll(true)
 	closeErr := d.transport.Close()
 	d.closed = true
 	if closeErr != nil {
@@ -178,7 +168,10 @@ func (d *device) ensureOpenLocked() error {
 	return nil
 }
 
-func (d *device) stopAllLocked(force bool) error {
+// stopAll sends an Off packet for every axis the device exposes.
+// force=true skips dedup so the wire actually carries the stop
+// even if the previous command was already an Off.
+func (d *device) stopAll(force bool) error {
 	var firstErr error
 	for _, target := range []hpr.Target{hpr.TargetClutch, hpr.TargetBrake, hpr.TargetThrottle} {
 		if err := d.sendLocked(normalizedCommand{target: target, state: hpr.Off}, force); err != nil && firstErr == nil {
