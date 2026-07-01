@@ -28,7 +28,7 @@ import (
 // --- SetupDi constants (setupapi.h) ---
 
 const (
-	digcfPresent        = 0x00000002
+	digcfPresent         = 0x00000002
 	digcfDeviceInterface = 0x00000010
 )
 
@@ -68,30 +68,30 @@ type hidGuid struct {
 
 // hiddAttributes mirrors HIDD_ATTRIBUTES.
 type hiddAttributes struct {
-	Size         uint32
-	VendorID     uint16
-	ProductID    uint16
+	Size          uint32
+	VendorID      uint16
+	ProductID     uint16
 	VersionNumber uint16
 }
 
 // hidPCaps mirrors HIDP_CAPS.
 type hidPCaps struct {
-	Usage                      uint16
-	UsagePage                  uint16
-	InputReportByteLength      uint16
-	OutputReportByteLength     uint16
-	FeatureReportByteLength    uint16
-	Reserved                   uint16
-	NumberLinkCollectionNodes  uint16
-	NumberInputButtonCaps      uint16
-	NumberInputValueCaps       uint16
-	NumberInputDataIndices     uint16
-	NumberOutputButtonCaps     uint16
-	NumberOutputValueCaps      uint16
-	NumberOutputDataIndices    uint16
-	NumberFeatureButtonCaps    uint16
-	NumberFeatureValueCaps     uint16
-	NumberFeatureDataIndices   uint16
+	Usage                     uint16
+	UsagePage                 uint16
+	InputReportByteLength     uint16
+	OutputReportByteLength    uint16
+	FeatureReportByteLength   uint16
+	Reserved                  [17]uint16
+	NumberLinkCollectionNodes uint16
+	NumberInputButtonCaps     uint16
+	NumberInputValueCaps      uint16
+	NumberInputDataIndices    uint16
+	NumberOutputButtonCaps    uint16
+	NumberOutputValueCaps     uint16
+	NumberOutputDataIndices   uint16
+	NumberFeatureButtonCaps   uint16
+	NumberFeatureValueCaps    uint16
+	NumberFeatureDataIndices  uint16
 }
 
 // spDeviceInterfaceData mirrors SP_DEVICE_INTERFACE_DATA.
@@ -99,7 +99,7 @@ type spDeviceInterfaceData struct {
 	cbSize             uint32
 	InterfaceClassGuid hidGuid
 	Flags              uint32
-	Reserved           uint32
+	Reserved           uintptr
 }
 
 // --- Public types ---
@@ -129,18 +129,18 @@ type Attributes struct {
 
 // Capabilities is what HidP_GetCaps returns from PreparsedData.
 type Capabilities struct {
-	Usage                    uint16
-	UsagePage                uint16
-	InputReportByteLength    uint16
-	OutputReportByteLength   uint16
-	FeatureReportByteLength  uint16
+	Usage                     uint16
+	UsagePage                 uint16
+	InputReportByteLength     uint16
+	OutputReportByteLength    uint16
+	FeatureReportByteLength   uint16
 	NumberLinkCollectionNodes uint16
-	NumberInputButtonCaps    uint16
-	NumberInputValueCaps     uint16
-	NumberOutputButtonCaps   uint16
-	NumberOutputValueCaps    uint16
-	NumberFeatureButtonCaps  uint16
-	NumberFeatureValueCaps   uint16
+	NumberInputButtonCaps     uint16
+	NumberInputValueCaps      uint16
+	NumberOutputButtonCaps    uint16
+	NumberOutputValueCaps     uint16
+	NumberFeatureButtonCaps   uint16
+	NumberFeatureValueCaps    uint16
 }
 
 // PreparsedData holds an opaque preparsed-data handle. Release it
@@ -158,27 +158,34 @@ type Transport struct {
 	handle windows.Handle
 }
 
+func setupDiDeviceInterfaceDetailDataSize() uint32 {
+	if unsafe.Sizeof(uintptr(0)) == 8 {
+		return 8
+	}
+	return 6
+}
+
 // --- Errors ---
 
 var (
-	errClosed           = stringError("hidtransport: transport is closed")
-	errPreparsedClosed  = stringError("hidtransport: preparsed data is closed")
-	errNoDevices        = stringError("hidtransport: no devices found")
-	errSetFeatureFailed = stringError("hidtransport: HidD_SetFeature failed")
-	errGetFeatureFailed = stringError("hidtransport: HidD_GetFeature failed")
-	errSetOutputFailed  = stringError("hidtransport: HidD_SetOutputReport failed")
-	errGetInputFailed   = stringError("hidtransport: HidD_GetInputReport failed")
-	errReadFailed       = stringError("hidtransport: ReadFile failed")
-	errWriteFailed      = stringError("hidtransport: WriteFile failed")
-	errGetCapsFailed    = stringError("hidtransport: HidP_GetCaps failed")
+	errClosed              = stringError("hidtransport: transport is closed")
+	errPreparsedClosed     = stringError("hidtransport: preparsed data is closed")
+	errNoDevices           = stringError("hidtransport: no devices found")
+	errSetFeatureFailed    = stringError("hidtransport: HidD_SetFeature failed")
+	errGetFeatureFailed    = stringError("hidtransport: HidD_GetFeature failed")
+	errSetOutputFailed     = stringError("hidtransport: HidD_SetOutputReport failed")
+	errGetInputFailed      = stringError("hidtransport: HidD_GetInputReport failed")
+	errReadFailed          = stringError("hidtransport: ReadFile failed")
+	errWriteFailed         = stringError("hidtransport: WriteFile failed")
+	errGetCapsFailed       = stringError("hidtransport: HidP_GetCaps failed")
 	errGetAttributesFailed = stringError("hidtransport: HidD_GetAttributes failed")
-	errGetStringFailed  = stringError("hidtransport: HidD_Get*String failed")
-	errPrepDataFailed   = stringError("hidtransport: HidD_GetPreparsedData failed")
-	errEnumFailed       = stringError("hidtransport: SetupDiEnumDeviceInterfaces failed")
-	errDetailFailed     = stringError("hidtransport: SetupDiGetDeviceInterfaceDetail failed")
-	errClassDevsFailed  = stringError("hidtransport: SetupDiGetClassDevs failed")
-	errFlushFailed      = stringError("hidtransport: HidD_FlushQueue failed")
-	errNumBuffersFailed = stringError("hidtransport: HidD_GetNumInputBuffers failed")
+	errGetStringFailed     = stringError("hidtransport: HidD_Get*String failed")
+	errPrepDataFailed      = stringError("hidtransport: HidD_GetPreparsedData failed")
+	errEnumFailed          = stringError("hidtransport: SetupDiEnumDeviceInterfaces failed")
+	errDetailFailed        = stringError("hidtransport: SetupDiGetDeviceInterfaceDetail failed")
+	errClassDevsFailed     = stringError("hidtransport: SetupDiGetClassDevs failed")
+	errFlushFailed         = stringError("hidtransport: HidD_FlushQueue failed")
+	errNumBuffersFailed    = stringError("hidtransport: HidD_GetNumInputBuffers failed")
 )
 
 type stringError string
@@ -201,9 +208,9 @@ var (
 	modHid      = windows.NewLazySystemDLL("hid.dll")
 	modSetupapi = windows.NewLazySystemDLL("setupapi.dll")
 
-	procCreateFileW               = modKernel32.NewProc("CreateFileW")
-	procReadFile                  = modKernel32.NewProc("ReadFile")
-	procWriteFile                 = modKernel32.NewProc("WriteFile")
+	procCreateFileW = modKernel32.NewProc("CreateFileW")
+	procReadFile    = modKernel32.NewProc("ReadFile")
+	procWriteFile   = modKernel32.NewProc("WriteFile")
 
 	procHidDSetFeature            = modHid.NewProc("HidD_SetFeature")
 	procHidDGetFeature            = modHid.NewProc("HidD_GetFeature")
@@ -222,12 +229,12 @@ var (
 	procHidDGetNumInputBuffers    = modHid.NewProc("HidD_GetNumInputBuffers")
 	procHidDSetNumInputBuffers    = modHid.NewProc("HidD_SetNumInputBuffers")
 
-	procHidPGetCaps               = modHid.NewProc("HidP_GetCaps")
+	procHidPGetCaps = modHid.NewProc("HidP_GetCaps")
 
 	procSetupDiGetClassDevs             = modSetupapi.NewProc("SetupDiGetClassDevsW")
-	procSetupDiEnumDeviceInterfaces    = modSetupapi.NewProc("SetupDiEnumDeviceInterfaces")
+	procSetupDiEnumDeviceInterfaces     = modSetupapi.NewProc("SetupDiEnumDeviceInterfaces")
 	procSetupDiGetDeviceInterfaceDetail = modSetupapi.NewProc("SetupDiGetDeviceInterfaceDetailW")
-	procSetupDiDestroyDeviceInfoList   = modSetupapi.NewProc("SetupDiDestroyDeviceInfoList")
+	procSetupDiDestroyDeviceInfoList    = modSetupapi.NewProc("SetupDiDestroyDeviceInfoList")
 )
 
 // --- Scanner ---
@@ -278,13 +285,13 @@ func (Scanner) Scan() ([]DeviceDescriptor, error) {
 			uintptr(unsafe.Pointer(&required)),
 			0,
 		)
-		if ret == 0 {
+		if required == 0 {
 			continue
 		}
 
 		buf := make([]byte, required)
 		detail := (*spDeviceInterfaceDetailData)(unsafe.Pointer(&buf[0]))
-		detail.cbSize = uint32(unsafe.Sizeof(detail.cbSize) + unsafe.Sizeof(detail.devicePath))
+		detail.cbSize = setupDiDeviceInterfaceDetailDataSize()
 
 		ret, _, _ = procSetupDiGetDeviceInterfaceDetail.Call(
 			hdev,
@@ -299,11 +306,17 @@ func (Scanner) Scan() ([]DeviceDescriptor, error) {
 		}
 
 		// Decode UTF-16 device path (variable-length, ends at NUL).
-		pathLen := (required - detail.cbSize) / 2
+		// DevicePath starts immediately after cbSize; cbSize itself is
+		// architecture-specific and must not be used as the string offset.
+		pathOffset := uintptr(unsafe.Offsetof(detail.devicePath))
+		if uintptr(len(buf)) <= pathOffset {
+			continue
+		}
+		pathLen := (uintptr(len(buf)) - pathOffset) / 2
 		if pathLen == 0 {
 			continue
 		}
-		pathU16 := unsafe.Slice(&detail.devicePath[0], pathLen)
+		pathU16 := unsafe.Slice((*uint16)(unsafe.Add(unsafe.Pointer(detail), pathOffset)), pathLen)
 		devicePath := windows.UTF16ToString(pathU16)
 		if devicePath == "" {
 			continue
