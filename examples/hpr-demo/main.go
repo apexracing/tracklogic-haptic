@@ -24,9 +24,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tracklogic/tracklogic-peripherals/internal/hidtransport"
-	"github.com/tracklogic/tracklogic-peripherals/pkg/hpr"
-	"github.com/tracklogic/tracklogic-peripherals/pkg/hpr/driver/simagic"
+	"github.com/apexracing/tracklogic-peripherals/internal/hidtransport"
+	"github.com/apexracing/tracklogic-peripherals/pkg/hpr"
+	"github.com/apexracing/tracklogic-peripherals/pkg/hpr/driver/simagic"
 )
 
 func main() {

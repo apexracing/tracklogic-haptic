@@ -1,4 +1,4 @@
-module github.com/tracklogic/tracklogic-peripherals
+module github.com/apexracing/tracklogic-peripherals
 
 go 1.26.4
 

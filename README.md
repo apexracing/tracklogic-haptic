@@ -23,7 +23,7 @@
 ## 安装
 
 ```sh
-go get github.com/tracklogic/tracklogic-peripherals
+go get github.com/apexracing/tracklogic-peripherals
 ```
 
 ## 快速上手
@@ -35,8 +35,8 @@ import (
     "log"
     "time"
 
-    "github.com/tracklogic/tracklogic-peripherals/pkg/hpr"
-    "github.com/tracklogic/tracklogic-peripherals/pkg/hpr/driver/simagic"
+    "github.com/apexracing/tracklogic-peripherals/pkg/hpr"
+    "github.com/apexracing/tracklogic-peripherals/pkg/hpr/driver/simagic"
 )
 
 func main() {
@@ -183,8 +183,8 @@ flowchart TD
 package myvendor
 
 import (
-    "github.com/tracklogic/tracklogic-peripherals/internal/hidtransport"
-    "github.com/tracklogic/tracklogic-peripherals/pkg/hpr"
+    "github.com/apexracing/tracklogic-peripherals/internal/hidtransport"
+    "github.com/apexracing/tracklogic-peripherals/pkg/hpr"
 )
 
 type Driver struct{}

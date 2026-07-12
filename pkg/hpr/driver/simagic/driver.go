@@ -10,8 +10,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/tracklogic/tracklogic-peripherals/internal/hidtransport"
-	"github.com/tracklogic/tracklogic-peripherals/pkg/hpr"
+	"github.com/apexracing/tracklogic-peripherals/internal/hidtransport"
+	"github.com/apexracing/tracklogic-peripherals/pkg/hpr"
 )
 
 // Universal command bounds. The Driver clamps to these silently

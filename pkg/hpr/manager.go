@@ -1,6 +1,6 @@
 package hpr
 
-import "github.com/tracklogic/tracklogic-peripherals/internal/hidtransport"
+import "github.com/apexracing/tracklogic-peripherals/internal/hidtransport"
 
 // Manager is the registry that wires together a set of Driver
 // implementations and a platform scanner. Callers build one with
